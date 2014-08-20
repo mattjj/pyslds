@@ -33,29 +33,31 @@ class _SLDSStatesMixin(object):
 
     ### main stuff
 
-    @property
-    def aBl(self):
-        if self._aBl is None:
-            data = self.data
-            aBl = self._aBl = np.empty((data.shape[0],self.num_states))
-
-            for idx, distn in enumerate(self.init_dynamics_distns):
-                aBl[0,idx] = distn.log_likelihood(self.data[0])
-
-            strided_data = AR_striding(self.gaussian_states,1)
-            for idx, distn in enumerate(self.dynamics_distns):
-                aBl[1:,idx] = distn.log_likelihood(strided_data)
-
-            aBl[np.isnan(aBl).any(1)] = 0.
-        return self._aBl
-
     def resample(self,niter=1):
         for itr in xrange(niter):
             self.resample_discrete_states()
             self.resample_gaussian_states()
 
+    ## resampling discrete states
+
     def resample_discrete_states(self):
         super(_SLDSStatesMixin,self).resample()
+
+    @property
+    def aBl(self):
+        if self._aBl is None:
+            aBl = self._aBl = np.empty((self.gaussian_states.shape[0],self.num_states))
+
+            for idx, distn in enumerate(self.init_dynamics_distns):
+                aBl[0,idx] = distn.log_likelihood(self.gaussian_states[0])
+
+            for idx, distn in enumerate(self.dynamics_distns):
+                aBl[1:,idx] = distn.log_likelihood(self.strided_gaussian_states)
+
+            aBl[np.isnan(aBl).any(1)] = 0.
+        return self._aBl
+
+    ## resampling conditionally linear dynamics
 
     def resample_gaussian_states(self):
         self._aBl = None # need to clear any caching
@@ -72,6 +74,12 @@ class _SLDSStatesMixin(object):
                 init_mu=init_mu, init_sigma=init_sigma,
                 As=As, BBTs=BBTs, Cs=Cs, DDTs=DDTs,
                 emissions=self.data)
+
+    @property
+    def strided_gaussian_states(self):
+        return AR_striding(self.gaussian_states,1)
+
+    ## generation
 
     def generate_states(self):
         super(_SLDSStatesMixin,self).generate_states()
