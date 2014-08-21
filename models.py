@@ -66,5 +66,3 @@ class HSMMSLDSPossibleChangepointsSeparateTrans(
         _SLDSMixin,pyhsmm.models.HSMMPossibleChangepointsSeparateTrans):
     _states_class = HSMMSLDSStatesPossibleChangepointsSeparateTrans
 
-# TODO PossibleChangepoints classes
-
