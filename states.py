@@ -3,8 +3,7 @@ import numpy as np
 
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
-        GeoHSMMStates
-from pyhsmm.util.general import block_view
+        GeoHSMMStates, _SeparateTransMixin
 
 from autoregressive.util import AR_striding
 
@@ -107,6 +106,11 @@ class GeoHSMMSLDSStates(_SLDSStatesMixin,GeoHSMMStates):
     pass
 
 
+class HSMMSLDSStatesPossibleChangepointsSeparateTrans(
+        _SLDSStatesMixin,_SeparateTransMixin,HSMMStatesPossibleChangepoints):
+    pass
+
+
 ### kalman filtering and smoothing functions
 
 def kf_resample_lds(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
@@ -145,8 +149,6 @@ def condition_on(mu_x,sigma_x,A,sigma_obs,y):
 
 solve_psd = np.linalg.solve
 
-# TODO special code for low-rank case when D_obs > D_latent
-# use solve_diagonal_plus_lowrank code from pykalmanfilters
-
-# TODO test if psd solver is better
+# TODO special code for diagonal plus low rank
+# TODO test if psd solves are better
 

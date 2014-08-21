@@ -4,17 +4,12 @@ from matplotlib import pyplot as plt
 from matplotlib import cm
 
 import pyhsmm
-from pyhsmm.basic.distributions import Regression, Gaussian
-from autoregressive.distributions import AutoRegression
 
 from states import HMMSLDSStates, HMMSLDSStatesEigen, HSMMSLDSStates, \
         HSMMSLDSStatesEigen, GeoHSMMSLDSStates
 
 class _SLDSMixin(object):
     def __init__(self,dynamics_distns,emission_distns,init_dynamics_distns,**kwargs):
-        assert all(isinstance(d,Gaussian) for d in init_dynamics_distns)
-        assert all(isinstance(d,AutoRegression) for d in dynamics_distns)
-        assert all(isinstance(d,Regression) for d in emission_distns)
         self.init_dynamics_distns = init_dynamics_distns
         self.dynamics_distns = dynamics_distns
         self.emission_distns = emission_distns
@@ -66,6 +61,10 @@ class WeakLimitHDPHMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHMM):
 class WeakLimitHDPHSMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHSMM):
     _states_class = HSMMSLDSStatesEigen
 
+
+class HSMMSLDSPossibleChangepointsSeparateTrans(
+        _SLDSMixin,pyhsmm.models.HSMMPossibleChangepointsSeparateTrans):
+    _states_class = HSMMSLDSStatesPossibleChangepointsSeparateTrans
 
 # TODO PossibleChangepoints classes
 
