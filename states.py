@@ -3,7 +3,7 @@ import numpy as np
 
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
-        GeoHSMMStates, _SeparateTransMixin
+        GeoHSMMStates, HSMMStatesPossibleChangepoints
 
 from autoregressive.util import AR_striding
 
@@ -61,15 +61,15 @@ class _SLDSStatesMixin(object):
     def resample_gaussian_states(self):
         self._aBl = None # need to clear any caching
         init_mu, init_sigma = \
-                self.dynamics_distns[self.stateseq[0]].mu, \
-                self.dynamics_distns[self.stateseq[0]].sigma
+                self.init_dynamics_distns[self.stateseq[0]].mu, \
+                self.init_dynamics_distns[self.stateseq[0]].sigma
         As, BBTs, Cs, DDTs = map(np.array,zip(*[(
             self.dynamics_distns[state].A,
             self.dynamics_distns[state].sigma,
             self.emission_distns[state].A,
             self.emission_distns[state].sigma,
             ) for state in self.stateseq[1:]]))
-        self.gaussian_states = kf_resample_slds(
+        self.gaussian_states = kf_resample_lds(
                 init_mu=init_mu, init_sigma=init_sigma,
                 As=As, BBTs=BBTs, Cs=Cs, DDTs=DDTs,
                 emissions=self.data)
@@ -85,7 +85,8 @@ class _SLDSStatesMixin(object):
         self.generate_gaussian_states()
 
     def generate_gaussian_states(self):
-        raise NotImplementedError
+        # TODO this is dumb, but generating from the prior will be unstable
+        self.gaussian_states = np.random.normal(size=(self.T,self.D_latent))
 
     def generate_obs(self):
         raise NotImplementedError
@@ -106,9 +107,9 @@ class GeoHSMMSLDSStates(_SLDSStatesMixin,GeoHSMMStates):
     pass
 
 
-class HSMMSLDSStatesPossibleChangepointsSeparateTrans(
-        _SLDSStatesMixin,_SeparateTransMixin,HSMMStatesPossibleChangepoints):
-    pass
+# class HSMMSLDSStatesPossibleChangepointsSeparateTrans(
+#         _SLDSStatesMixin,_SeparateTransMixin,HSMMStatesPossibleChangepoints):
+#     pass
 
 
 ### kalman filtering and smoothing functions

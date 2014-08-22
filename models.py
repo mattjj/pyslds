@@ -21,7 +21,7 @@ class _SLDSMixin(object):
         self.resample_emission_distns()
         super(_SLDSMixin,self).resample_parameters()
 
-    def resample_init_dynamics_distns():
+    def resample_init_dynamics_distns(self):
         for state, d in enumerate(self.init_dynamics_distns):
             d.resample([s.gaussian_states[0]
                 for s in self.states_list if s.stateseq[0] == state])
@@ -34,8 +34,12 @@ class _SLDSMixin(object):
         self._clear_caches()
 
     def resample_emission_distns(self):
+        # TODO get rid of this hstack
         for state, d in enumerate(self.emission_distns):
-            d.resample([s.data[s.stateseq == state] for s in self.states_list])
+            d.resample([np.hstack((
+                s.gaussian_states[s.stateseq == state],
+                s.data[s.stateseq == state]))
+                for s in self.states_list])
         self._clear_caches()
 
     def resample_obs_distns(self):
@@ -62,7 +66,7 @@ class WeakLimitHDPHSMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHSMM):
     _states_class = HSMMSLDSStatesEigen
 
 
-class HSMMSLDSPossibleChangepointsSeparateTrans(
-        _SLDSMixin,pyhsmm.models.HSMMPossibleChangepointsSeparateTrans):
-    _states_class = HSMMSLDSStatesPossibleChangepointsSeparateTrans
+# class HSMMSLDSPossibleChangepointsSeparateTrans(
+#         _SLDSMixin,pyhsmm.models.HSMMPossibleChangepointsSeparateTrans):
+#     _states_class = HSMMSLDSStatesPossibleChangepointsSeparateTrans
 
