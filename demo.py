@@ -26,7 +26,7 @@ truemodel = autoregressive.models.ARHSMM(
             for state in range(len(As))],
         )
 
-data = truemodel.rvs(1000)
+data, labels = truemodel.generate(100)
 
 plt.figure()
 plt.plot(data[:,0],data[:,1],'bx-')
@@ -35,7 +35,7 @@ plt.plot(data[:,0],data[:,1],'bx-')
 #  build model  #
 #################
 
-Nmax = 10
+Nmax = 4
 
 dynamics_distns = [
         AutoRegression(nu_0=3,S_0=np.eye(2),M_0=np.zeros((2,2)),K_0=np.eye(2))
@@ -58,6 +58,10 @@ model = HMMSLDS(
 ##################
 
 model.add_data(data)
-import ipdb; ipdb.set_trace()
-model.resample_model()
+s = model.states_list[0]
+s.gaussian_states = data
+
+for itr in progprint_xrange(50):
+    model.resample_dynamics_distns()
+    s.resample_discrete_states()
 
