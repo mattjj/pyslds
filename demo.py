@@ -55,9 +55,8 @@ dynamics_distns = [
 
 emission_distns = [
         Regression(
-            A=np.eye(D),sigma=0.1*np.eye(D), # TODO remove special case
-            # A=np.bmat((np.zeros((2,2)),np.eye(2))),sigma=0.1*np.eye(2),
-            nu_0=5,S_0=5*np.eye(D),M_0=np.zeros((D,P)),K_0=np.eye(P)
+            # A=np.eye(D),sigma=0.1*np.eye(D), # TODO remove special case
+            nu_0=5,S_0=np.eye(D),M_0=np.zeros((D,P)),K_0=np.eye(P)
             )
         for _ in xrange(Nmax)]
 
@@ -75,30 +74,36 @@ model = WeakLimitStickyHDPHMMSLDS(
 #  run sampling  #
 ##################
 
-model.add_data(data,stateseq=labels) # TODO needs init when passing in labels
+### initialize to ground truth
+# model.add_data(data,stateseq=labels) # TODO needs init when passing in labels
+# s = model.states_list[0]
+# s.gaussian_states = data # setup-dependent!
+
+### initialize to NOTHING! you get NOTHING!
+# model.add_data(data)
+# s = model.states_list[0]
+
+### initialize to all one thing, which seems to work best
+model.add_data(data,stateseq=np.zeros(data.shape[0]))
 s = model.states_list[0]
-s.gaussian_states = data
+s.resample_gaussian_states()
+
 
 samples = []
-for itr in progprint_xrange(250):
+for itr in progprint_xrange(100):
     # resample everything except the gaussian_states and the emission
     # distributions
-    s.resample_discrete_states()
-    model.resample_dynamics_distns()
-    model.resample_init_state_distn()
-    model.resample_trans_distn()
-    model.resample_init_dynamics_distns()
+    # s.resample_discrete_states()
+    # model.resample_dynamics_distns()
+    # model.resample_init_state_distn()
+    # model.resample_trans_distn()
+    # model.resample_init_dynamics_distns()
+
+    # TODO wow gaussian state resampling is slow, and fun to push down into
+    # eigen! need to generate random variates up front
+    model.resample_model()
 
     samples.append(s.stateseq.copy())
-
-# for itr in progprint_xrange(100):
-#     s.resample_gaussian_states()
-#     model.resample_parameters()
-
-# samples = []
-# for itr in progprint_xrange(100):
-#     model.resample_model()
-#     samples.append(s.stateseq.copy())
 
 plt.plot(s.gaussian_states[:,0],s.gaussian_states[:,1],'r-')
 # plot_pca(s.gaussian_states,'rx-')
@@ -106,3 +111,4 @@ plt.plot(s.gaussian_states[:,0],s.gaussian_states[:,1],'r-')
 plt.matshow(np.vstack(samples+[np.tile(labels,(10,1))]))
 
 plt.show()
+

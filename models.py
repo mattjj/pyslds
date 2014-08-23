@@ -8,6 +8,9 @@ import pyhsmm
 from states import HMMSLDSStates, HMMSLDSStatesEigen, HSMMSLDSStates, \
         HSMMSLDSStatesEigen, GeoHSMMSLDSStates
 
+from pyhsmm.util.profiling import line_profiled
+PROFILING=True
+
 class _SLDSMixin(object):
     def __init__(self,dynamics_distns,emission_distns,init_dynamics_distns,**kwargs):
         self.init_dynamics_distns = init_dynamics_distns
@@ -15,6 +18,7 @@ class _SLDSMixin(object):
         self.emission_distns = emission_distns
         super(_SLDSMixin,self).__init__(obs_distns=self.dynamics_distns,**kwargs)
 
+    @line_profiled
     def resample_parameters(self):
         self.resample_init_dynamics_distns()
         self.resample_dynamics_distns()

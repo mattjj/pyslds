@@ -7,6 +7,9 @@ from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
 
 from autoregressive.util import AR_striding
 
+from pyhsmm.util.profiling import line_profiled
+PROFILING=True
+
 class _SLDSStatesMixin(object):
     ### convenience properties
 
@@ -32,6 +35,7 @@ class _SLDSStatesMixin(object):
 
     ### main stuff
 
+    @line_profiled
     def resample(self,niter=1):
         for itr in xrange(niter):
             self.resample_discrete_states()
@@ -58,6 +62,7 @@ class _SLDSStatesMixin(object):
 
     ## resampling conditionally linear dynamics
 
+    @line_profiled
     def resample_gaussian_states(self):
         self._aBl = None # need to clear any caching
         init_mu, init_sigma = \
