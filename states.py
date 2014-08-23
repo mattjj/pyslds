@@ -64,10 +64,8 @@ class _SLDSStatesMixin(object):
                 self.init_dynamics_distns[self.stateseq[0]].mu, \
                 self.init_dynamics_distns[self.stateseq[0]].sigma
         As, BBTs, Cs, DDTs = map(np.array,zip(*[(
-            self.dynamics_distns[state].A,
-            self.dynamics_distns[state].sigma,
-            self.emission_distns[state].A,
-            self.emission_distns[state].sigma,
+            self.dynamics_distns[state].A, self.dynamics_distns[state].sigma,
+            self.emission_distns[state].A, self.emission_distns[state].sigma,
             ) for state in self.stateseq]))
         self.gaussian_states = kf_resample_lds(
                 init_mu=init_mu, init_sigma=init_sigma,
