@@ -79,7 +79,7 @@ model = WeakLimitStickyHDPHMMSLDS(
 # s = model.states_list[0]
 # s.gaussian_states = data # setup-dependent!
 
-### initialize to NOTHING! you get NOTHING!
+### initialize to NOTHING! you get NOTHING! initialize from prior
 # model.add_data(data)
 # s = model.states_list[0]
 
