@@ -41,16 +41,10 @@ Nmax = len(As)
 
 dynamics_distns = [
         AutoRegression(
-            A=A,sigma=np.eye(2),
+            A=np.eye(2),sigma=2*np.eye(2),
             nu_0=5,S_0=np.eye(2),M_0=np.zeros((2,2)),K_0=np.eye(2),
             )
-        for A in As]
-# dynamics_distns = [
-#         AutoRegression(
-#             A=np.eye(2),sigma=2*np.eye(2),
-#             nu_0=5,S_0=np.eye(2),M_0=np.zeros((2,2)),K_0=np.eye(2),
-#             )
-#         for _ in xrange(Nmax)]
+        for _ in xrange(Nmax)]
 emission_distns = [
         Regression(
             A=np.eye(2),sigma=np.eye(2),
@@ -77,13 +71,7 @@ model.add_data(data,stateseq=labels) # TODO needs init when passing in labels
 s = model.states_list[0]
 s.resample_gaussian_states()
 
-# for itr in progprint_xrange(50):
-#     s.resample_gaussian_states()
-#     model.resample_emission_distns()
-
 for itr in progprint_xrange(50):
-#     s.resample_gaussian_states()
-#     model.resample_parameters()
     model.resample_model()
 
 plt.plot(s.gaussian_states[:,0],s.gaussian_states[:,1],'r-')
