@@ -68,7 +68,7 @@ class _SLDSStatesMixin(object):
             self.dynamics_distns[state].sigma,
             self.emission_distns[state].A,
             self.emission_distns[state].sigma,
-            ) for state in self.stateseq[1:]]))
+            ) for state in self.stateseq]))
         self.gaussian_states = kf_resample_lds(
                 init_mu=init_mu, init_sigma=init_sigma,
                 As=As, BBTs=BBTs, Cs=Cs, DDTs=DDTs,
@@ -133,6 +133,9 @@ def kf_resample_lds(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
         prediction_mu, prediction_sigma = \
             A.dot(filtered_mus[t]), A.dot(filtered_sigmas[t]).dot(A.T) + BBT
 
+        assert np.allclose(prediction_sigma,prediction_sigma.T)
+        assert np.all(np.linalg.eigvalsh(prediction_sigma) > 0)
+
     # sample backwards
     x[-1] = np.random.multivariate_normal(filtered_mus[-1],filtered_sigmas[-1])
     for t in xrange(T-2,-1,-1):
@@ -146,10 +149,13 @@ def condition_on(mu_x,sigma_x,A,sigma_obs,y):
     sigma_yy = A.dot(sigma_x).dot(A.T) + sigma_obs
     mu = mu_x + sigma_xy.dot(solve_psd(sigma_yy, y - A.dot(mu_x)))
     sigma = sigma_x - sigma_xy.dot(solve_psd(sigma_yy,sigma_xy.T))
-    return mu, sigma
+    return mu, symmetrize(sigma)
+
+def symmetrize(A):
+    return (A+A.T)/2.
 
 solve_psd = np.linalg.solve
 
 # TODO special code for diagonal plus low rank
-# TODO test if psd solves are better
+# TODO test if psd solves are better (scipy.linalg.lapack.dposv)
 
