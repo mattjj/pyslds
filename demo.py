@@ -75,7 +75,7 @@ model = WeakLimitStickyHDPHMMSLDS(
 ##################
 
 ### initialize to ground truth
-# model.add_data(data,stateseq=labels) # TODO needs init when passing in labels
+# model.add_data(data,stateseq=labels) # TODO gaussian states need init
 # s = model.states_list[0]
 # s.gaussian_states = data # setup-dependent!
 

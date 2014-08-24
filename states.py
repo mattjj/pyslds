@@ -117,6 +117,7 @@ class GeoHSMMSLDSStates(_SLDSStatesMixin,GeoHSMMStates):
 
 ### kalman filtering and smoothing functions
 
+@line_profiled
 def kf_resample_lds(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
     T, D_obs, D_latent = emissions.shape[0], emissions.shape[1], As[0].shape[0]
 
@@ -135,9 +136,6 @@ def kf_resample_lds(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
         # predict
         prediction_mu, prediction_sigma = \
             A.dot(filtered_mus[t]), A.dot(filtered_sigmas[t]).dot(A.T) + BBT
-
-        assert np.allclose(prediction_sigma,prediction_sigma.T)
-        assert np.all(np.linalg.eigvalsh(prediction_sigma) > 0)
 
     # sample backwards
     x[-1] = np.random.multivariate_normal(filtered_mus[-1],filtered_sigmas[-1])
