@@ -19,7 +19,7 @@ import autoregressive
 As = [np.array(
     [[np.cos(theta), -np.sin(theta)],
      [np.sin(theta), np.cos(theta)]]
-    ) for alpha,theta in ((1.1,0.1),(1.0,-0.1),(0.9,0.25))] + [np.eye(2)]
+    ) for alpha,theta in ((1.2,0.1),(1.0,-0.1),(0.9,0.25))]
 
 # As = [np.hstack((-np.eye(2),2*np.eye(2))),
 #         np.array([[np.cos(np.pi/6),-np.sin(np.pi/6)],[np.sin(np.pi/6),np.cos(np.pi/6)]]).dot(np.hstack((-np.eye(2),np.eye(2)))) + np.hstack((np.zeros((2,2)),np.eye(2))),
@@ -28,11 +28,11 @@ As = [np.array(
 truemodel = autoregressive.models.ARHSMM(
         alpha=4.,init_state_concentration=4.,
         obs_distns=[AutoRegression(A=A,sigma=0.05*np.eye(2)) for A in As],
-        dur_distns=[pyhsmm.basic.distributions.PoissonDuration(alpha_0=5*50,beta_0=5)
+        dur_distns=[pyhsmm.basic.distributions.PoissonDuration(alpha_0=5*30,beta_0=5)
             for _ in As],
         )
 
-data, labels = truemodel.generate(1000)
+data, labels = truemodel.generate(300)
 data = data[truemodel.nlags:]
 
 plt.figure()
@@ -42,7 +42,7 @@ plt.plot(data[:,0],data[:,1],'bx-')
 #  build model  #
 #################
 
-Nmax = 10         # number of latnt discrete states
+Nmax = 25         # number of latnt discrete states
 P = 2             # latent linear dynamics' dimension
 D = data.shape[1] # data dimension
 
@@ -80,17 +80,17 @@ model = WeakLimitStickyHDPHMMSLDS(
 # s.gaussian_states = data # setup-dependent!
 
 ### initialize to NOTHING! you get NOTHING! initialize from prior
-# model.add_data(data)
-# s = model.states_list[0]
+model.add_data(data)
+s = model.states_list[0]
 
 ### initialize to all one thing, which seems to work best
-model.add_data(data,stateseq=np.zeros(data.shape[0]))
-s = model.states_list[0]
-s.resample_gaussian_states()
+# model.add_data(data,stateseq=np.zeros(data.shape[0]))
+# s = model.states_list[0]
+# s.resample_gaussian_states()
 
 
 samples = []
-for itr in progprint_xrange(100):
+for itr in progprint_xrange(250):
     # resample everything except the gaussian_states and the emission
     # distributions
     # s.resample_discrete_states()
