@@ -155,16 +155,16 @@ def kf_resample_lds(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
     return x
 
 
-# def condition_on(mu_x,sigma_x,A,sigma_obs,y):
-#     # NOTE: since caller just wants a chol of sigma, much smarter to do a
-#     # downdate on the chol of sigma_x! should keep everything factored always
-#     # mu = mu_x + sigma_xy sigma_yy^{-1} (y - A mu_x)
-#     # sigma = sigma_x - sigma_xy sigma_yy^{-1} sigma_xy'
-#     sigma_xy = sigma_x.dot(A.T)
-#     sigma_yy = A.dot(sigma_x).dot(A.T) + sigma_obs
-#     mu = mu_x + sigma_xy.dot(solve_psd(sigma_yy, y - A.dot(mu_x)))
-#     sigma = sigma_x - sigma_xy.dot(solve_psd(sigma_yy,sigma_xy.T))
-#     return mu, symmetrize(sigma)
+def condition_on_python(mu_x,sigma_x,A,sigma_obs,y,*args):
+    # NOTE: since caller just wants a chol of sigma, much smarter to do a
+    # downdate on the chol of sigma_x! should keep everything factored always
+    # mu = mu_x + sigma_xy sigma_yy^{-1} (y - A mu_x)
+    # sigma = sigma_x - sigma_xy sigma_yy^{-1} sigma_xy'
+    sigma_xy = sigma_x.dot(A.T)
+    sigma_yy = A.dot(sigma_x).dot(A.T) + sigma_obs
+    mu = mu_x + sigma_xy.dot(solve_psd(sigma_yy, y - A.dot(mu_x)))
+    sigma = sigma_x - sigma_xy.dot(solve_psd(sigma_yy,sigma_xy.T))
+    return mu, symmetrize(sigma)
 
 # def symmetrize(A):
 #     ret = A+A.T
