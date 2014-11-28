@@ -166,10 +166,10 @@ def condition_on_python(mu_x,sigma_x,A,sigma_obs,y,*args):
     sigma = sigma_x - sigma_xy.dot(solve_psd(sigma_yy,sigma_xy.T))
     return mu, symmetrize(sigma)
 
-# def symmetrize(A):
-#     ret = A+A.T
-#     ret /= 2.
-#     return ret
+def symmetrize(A):
+    ret = A+A.T
+    ret /= 2.
+    return ret
 
 solve_psd = np.linalg.solve
 
