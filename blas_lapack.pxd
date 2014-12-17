@@ -1,4 +1,8 @@
-### BLAS http://www.netlib.org/blas/
+##########
+#  BLAS  #
+##########
+
+# http://www.netlib.org/blas/
 
 # http://www.netlib.org/lapack/explore-html/d5/df6/ddot_8f.html
 ctypedef double ddot_t(
@@ -51,7 +55,11 @@ ctypedef double dger_t(
     ) nogil
 cdef dger_t *dger
 
-### LAPACK http://www.netlib.org/lapack/
+############
+#  LAPACK  #
+############
+
+# http://www.netlib.org/lapack/
 
 ctypedef int dposv_t(
     char *uplo, int *n, int *nrhs,
@@ -72,4 +80,16 @@ ctypedef int dpotrs_t(
     double *b, int *ldb,
     int *info) nogil
 cdef dpotrs_t *dpotrs
+
+###########################
+#  convenience functions  #
+###########################
+
+cdef inline void dotmv(double[:,::1] A, double[::1] x, double[::1] out) nogil:
+    cdef double alpha = 1., beta = 0.
+    cdef int inc = 1
+    dgemv('T', <int*> &A.shape[0], <int*> &A.shape[1],
+            &alpha, &A[0,0], <int*> &A.shape[0],
+            &x[0], &inc, &beta,
+            &out[0], &inc)
 
