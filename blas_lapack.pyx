@@ -27,11 +27,3 @@ cdef:
     dpotrf_t* dpotrf = <dpotrf_t*>f2py_pointer(scipy.linalg.lapack.dpotrf._cpointer)
     dpotrs_t* dpotrs = <dpotrs_t*>f2py_pointer(scipy.linalg.lapack.dpotrs._cpointer)
 
-cdef inline void dotmv(double[:,::1] A, double[::1] x, double[::1] out):
-    cdef double alpha = 1., beta = 0.
-    cdef int inc = 1
-    dgemv('T', <int*> &A.shape[0], <int*> &A.shape[1],
-            &alpha, &A[0,0], <int*> &A.shape[0],
-            &x[0], &inc, &beta,
-            &out[0], &inc)
-
