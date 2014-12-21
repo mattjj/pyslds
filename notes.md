@@ -18,4 +18,24 @@ so cython wins here!
 
 
 hmm, but with this strategy of pulling out the pointer, the compiler may not be
-able to inline?
+able to inline? whatever
+
+
+
+
+
+cholesky up/downdating
+
+there are linpack routines
+
+seeger implementation is better than LINPACK mainly because it uses BLAS, but
+it's all matlabby and also GPL:
+http://www.ams.org/journals/mcom/1974-28-126/S0025-5718-1974-0343558-6/home.html
+http://ipg.epfl.ch/~seeger/lapmalmainweb/software/index.shtml
+
+discussion:
+http://mathoverflow.net/questions/30162/is-there-a-way-to-simplify-block-cholesky-decomposition-if-you-already-have-deco
+
+GvL 4th ed. Section 6.5 has a great discussion
+For numerical stability, its reference Algorithm 2' is best:
+http://www.sciencedirect.com/science/article/pii/0024379588901589
