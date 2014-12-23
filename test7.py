@@ -45,6 +45,6 @@ print sigma_predict[:3,:3]
 print (A.dot(sigma_x - sigma_x.dot(C.T).dot(np.linalg.solve(sigma_y,C.dot(sigma_x)))).dot(A.T) + sigma_states)[:3,:3]
 
 from lds2 import condition_on as condition_on2
-condition_on2(*map(np.ascontiguousarray, [mu_x, sigma_x, A, sigma_obs, y, mu_cond, sigma_cond]))
-
+cargs = map(np.ascontiguousarray, [mu_x, sigma_x, A, sigma_obs, y, mu_cond, sigma_cond])
+condition_on2(*cargs)
 
