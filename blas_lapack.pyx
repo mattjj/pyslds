@@ -13,6 +13,8 @@ cdef extern from "f2pyptr.h":
 cdef:
     ### BLAS
     # level 1
+    dcopy_t *dcopy = <dcopy_t*>f2py_pointer(scipy.linalg.blas.dcopy._cpointer)
+    daxpy_t *daxpy = <daxpy_t*>f2py_pointer(scipy.linalg.blas.daxpy._cpointer)
     srotg_t *srotg = <srotg_t*>f2py_pointer(scipy.linalg.blas.srotg._cpointer)
     srot_t *srot = <srot_t*>f2py_pointer(scipy.linalg.blas.srot._cpointer)
     drotg_t *drotg = <drotg_t*>f2py_pointer(scipy.linalg.blas.drotg._cpointer)

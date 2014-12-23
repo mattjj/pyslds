@@ -13,6 +13,16 @@ from libc.math cimport sqrt
 
 # http://www.netlib.org/blas/
 
+ctypedef int dcopy_t(
+    int *n, double *dx, int *incx, double *dy, int *incy
+    ) nogil
+cdef dcopy_t *dcopy
+
+ctypedef int daxpy_t(
+    int *n, double *da, double *dx, int *incx, double *dy, int *incy
+    ) nogil
+cdef daxpy_t *daxpy
+
 ctypedef int drotg_t(
     double *da, double *db, double *c ,double *s
     ) nogil
@@ -130,7 +140,7 @@ cdef dsyrk_t *dsyrk
 
 # TODO maybe I should just work with column-major matrices in cython... this is confusing
 
-cdef inline void gemv(double[:,::1] A, double[::1] x, double[::1] out) nogil:
+cdef inline void r_gemv(double[:,::1] A, double[::1] x, double[::1] out) nogil:
     cdef double alpha = 1., beta = 0.
     cdef int inc = 1
     dgemv("T", <int*> &A.shape[1], <int*> &A.shape[0],
@@ -138,7 +148,7 @@ cdef inline void gemv(double[:,::1] A, double[::1] x, double[::1] out) nogil:
             &x[0], &inc, &beta,
             &out[0], &inc)
 
-cdef inline void gemm(double[:,::1] A, double[:,::1] B, double[:,::1] out) nogil:
+cdef inline void r_gemm(double[:,::1] A, double[:,::1] B, double[:,::1] out) nogil:
     cdef double alpha = 1., beta = 0.
     cdef int inc = 1
     dgemm("N", "N", <int*> &B.shape[1], <int*> &A.shape[0], <int*> &A.shape[1],
@@ -148,7 +158,7 @@ cdef inline void gemm(double[:,::1] A, double[:,::1] B, double[:,::1] out) nogil
             &beta,
             &out[0,0], <int*> &out.shape[1])
 
-cdef inline void symv(char *uplo, double[:,::1] A, double[::1] x, double[::1] out) nogil:
+cdef inline void r_symv(char *uplo, double[:,::1] A, double[::1] x, double[::1] out) nogil:
     cdef double alpha = 1., beta = 0.
     cdef int inc = 1
     dsymv(uplo, <int*> &A.shape[0],
@@ -158,7 +168,7 @@ cdef inline void symv(char *uplo, double[:,::1] A, double[::1] x, double[::1] ou
             &beta,
             &out[0], &inc)
 
-cdef inline void symm(char *side, char *uplo, double[:,::1] A, double[:,::1] B, double[:,::1] out) nogil:
+cdef inline void r_symm(char *side, char *uplo, double[:,::1] A, double[:,::1] B, double[:,::1] out) nogil:
     cdef double alpha = 1., beta = 0.
     cdef int inc = 1
     cdef char myside = 'L' if side[0] == 'R' else 'R'
