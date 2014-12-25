@@ -88,6 +88,12 @@ ctypedef double dger_t(
     ) nogil
 cdef dger_t *dger
 
+ctypedef int dtrmv_t(
+    char *uplo, char *trans, char *diag, int *n,
+    double *a, int *lda, double *x, int *incx
+    ) nogil
+cdef dtrmv_t *dtrmv
+
 ############
 #  LAPACK  #
 ############

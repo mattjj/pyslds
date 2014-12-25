@@ -22,12 +22,13 @@ cdef:
     ddot_t *ddot = <ddot_t*>f2py_pointer(scipy.linalg.blas.ddot._cpointer)
 
     # level 2
+    dsymv_t *dsymv = <dsymv_t*>f2py_pointer(scipy.linalg.blas.dsymv._cpointer)
+    dgemv_t *dgemv = <dgemv_t*>f2py_pointer(scipy.linalg.blas.dgemv._cpointer)
     dger_t *dger = <dger_t*>f2py_pointer(scipy.linalg.blas.dger._cpointer)
+    dtrmv_t *dtrmv = <dtrmv_t*>f2py_pointer(scipy.linalg.blas.dtrmv._cpointer)
 
     # level 3
-    dgemv_t *dgemv = <dgemv_t*>f2py_pointer(scipy.linalg.blas.dgemv._cpointer)
     dgemm_t *dgemm = <dgemm_t*>f2py_pointer(scipy.linalg.blas.dgemm._cpointer)
-    dsymv_t *dsymv = <dsymv_t*>f2py_pointer(scipy.linalg.blas.dsymv._cpointer)
     dsymm_t *dsymm = <dsymm_t*>f2py_pointer(scipy.linalg.blas.dsymm._cpointer)
     dsyrk_t *dsyrk = <dsyrk_t*>f2py_pointer(scipy.linalg.blas.dsyrk._cpointer)
 

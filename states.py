@@ -7,7 +7,7 @@ from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
 
 from autoregressive.util import AR_striding
 
-from util import condition_on
+# from util import condition_on
 
 from pyhsmm.util.profiling import line_profiled
 PROFILING=True
@@ -121,21 +121,22 @@ class GeoHSMMSLDSStates(_SLDSStatesMixin,GeoHSMMStates):
 
 @line_profiled
 def kf_resample_lds(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
+    filtered_mus, filtered_sigmas = kf(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions)
+    x = ks_sample_backwards(As,BBTs,filtered_mus,filtered_sigmas)
+    return x
+
+@line_profiled
+def kf(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
     T, D_obs, D_latent = emissions.shape[0], emissions.shape[1], As[0].shape[0]
 
     # NOTE: could overwrite C's and D's here instead of allocating these
     filtered_mus = np.empty((T,D_latent))
     filtered_sigmas = np.empty((T,D_latent,D_latent))
 
-    # NOTE: generate the randomness up front here, even re-use storage of x
-    x = np.empty((T,D_latent))
-
     # messages forwards
     prediction_mu, prediction_sigma = init_mu, init_sigma
     for t, (A,BBT,C,DDT) in enumerate(zip(As,BBTs,Cs,DDTs)):
         # condition
-        # NOTE: should be returning the sigma chol instead, since that makes the
-        # computation easier and it's what we need at the end anyway
         condition_on(prediction_mu,prediction_sigma,C,DDT,emissions[t],
                 filtered_mus[t],filtered_sigmas[t])
 
@@ -143,28 +144,33 @@ def kf_resample_lds(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
         prediction_mu, prediction_sigma = \
             A.dot(filtered_mus[t]), A.dot(filtered_sigmas[t]).dot(A.T) + BBT
 
-    # sample backwards
-    x[-1] = np.random.multivariate_normal(filtered_mus[-1],filtered_sigmas[-1])
+    return filtered_mus, filtered_sigmas
+
+@line_profiled
+def ks_sample_backwards(As,BBTs,filtered_mus,filtered_sigmas):
+    T, D_latent = filtered_mus.shape
+    x = np.empty((T,D_latent))
+    randseq = np.random.randn(T,D_latent)
     mu, sigma = np.empty(D_latent), np.empty((D_latent,D_latent))
+
+    x[-1] = filtered_mus[-1] + np.linalg.cholesky(filtered_sigmas[-1]).dot(randseq[-1])
     for t in xrange(T-2,-1,-1):
         # NOTE: should be doing a chol downdate here
         condition_on(filtered_mus[t],filtered_sigmas[t],As[t],BBTs[t],x[t+1],
                 mu,sigma)
-        x[t] = np.random.multivariate_normal(mu,sigma)
+        x[t] = mu + np.linalg.cholesky(sigma).dot(randseq[t])
 
     return x
 
-
-def condition_on_python(mu_x,sigma_x,A,sigma_obs,y,*args):
-    # NOTE: since caller just wants a chol of sigma, much smarter to do a
-    # downdate on the chol of sigma_x! should keep everything factored always
+def condition_on(mu_x, sigma_x, A, sigma_obs, y, mu_cond, sigma_cond):
     # mu = mu_x + sigma_xy sigma_yy^{-1} (y - A mu_x)
     # sigma = sigma_x - sigma_xy sigma_yy^{-1} sigma_xy'
     sigma_xy = sigma_x.dot(A.T)
     sigma_yy = A.dot(sigma_x).dot(A.T) + sigma_obs
     mu = mu_x + sigma_xy.dot(solve_psd(sigma_yy, y - A.dot(mu_x)))
     sigma = sigma_x - sigma_xy.dot(solve_psd(sigma_yy,sigma_xy.T))
-    return mu, symmetrize(sigma)
+    mu_cond[...], sigma_cond[...] = mu, symmetrize(sigma)
+    # mu_cond[...], sigma_cond[...] = mu, sigma # unstable w/o symmetrize, maybe b/c QR
 
 def symmetrize(A):
     ret = A+A.T
