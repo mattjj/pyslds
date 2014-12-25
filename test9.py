@@ -3,7 +3,7 @@ import numpy as np
 from numpy.random import randn
 
 from states import kf, ks_sample_backwards, kf_resample_lds
-from lds import kalman_filter, filter_and_sample, kalman_filter_clean
+from lds import kalman_filter, filter_and_sample, kalman_filter_clean, filter_and_sample_clean
 
 def rand_psd(n):
     A = randn(n,n)
@@ -45,5 +45,9 @@ if __name__ == '__main__':
     x = ks_sample_backwards([A]*T, [BBT]*T, filtered_mus, filtered_sigmas)
     np.random.seed(0)
     x2 = filter_and_sample(init_mu, init_sigma, A, BBT, C, DDT, data)
+    np.random.seed(0)
+    x3 = filter_and_sample_clean(init_mu, init_sigma, A, BBT, C, DDT, data)
     print np.allclose(x,x2)
+    print
+    print np.allclose(x,x3)
 
