@@ -13,10 +13,8 @@ from blas_lapack cimport r_gemv, r_gemm, r_symv, r_symm, \
 from blas_lapack cimport dsymm, dcopy, dgemm, dpotrf, \
         dgemv, dpotrs, daxpy, dtrtrs, dsyrk, dtrmv
 
-# TODO two choleskys per step on the backwards pass? one for conditioning, one
-# for sampling. seems expensive
-# TODO make cholesky update/downdate version
 # TODO make switching version
+# TODO make cholesky update/downdate versions
 # TODO make (generate?) single-precision version
 
 # NOTE: I tried the dsymm / dsyrk version, and it was slower! (on my laptop)
@@ -57,22 +55,30 @@ def kalman_filter(
     mu_predict[...] = mu_init
     sigma_predict[...] = sigma_init
     for t in range(T):
+        ### temp1 = chol(C * sigma_predict * C' + sigma_obs)
         dgemm('N', 'N', &p, &n, &n, &one, &C[0,0], &p, &sigma_predict[0,0], &n, &zero, &temp2[0,0], &p)
         # dsymm('R','L', &p, &n, &one, &sigma_predict[0,0], &n, &C[0,0], &p, &zero, &temp2[0,0], &p)
         dcopy(&pp, &sigma_obs[0,0], &inc, &temp1[0,0], &inc)
         dgemm('N', 'T', &p, &p, &n, &one, &temp2[0,0], &p, &C[0,0], &p, &one, &temp1[0,0], &p)
         dpotrf('L', &p, &temp1[0,0], &p, &info)
+
+        ### filtered_mus[t] = mu_predict + sigma_predict * C' * inv_from_chol(temp1) * (y - C * mu_predict)
         dcopy(&p, &data[t,0], &inc, &temp3[0], &inc)
         dgemv('N', &p, &n, &neg1, &C[0,0], &p, &mu_predict[0], &inc, &one, &temp3[0], &inc)
         dpotrs('L', &p, &inc, &temp1[0,0], &p, &temp3[0], &p, &info)
         dcopy(&n, &mu_predict[0], &inc, &filtered_mus[t,0], &inc)
         dgemv('T', &p, &n, &one, &temp2[0,0], &p, &temp3[0], &inc, &one, &filtered_mus[t,0], &inc)
+
+        ### filtered_sigmas[t] = sigma_predict - solve(temp1, C * sigma_x)' * solve(temp1, C * sigma_x)
         dtrtrs('L', 'N', 'N', &p, &n, &temp1[0,0], &p, &temp2[0,0], &p, &info)
         dcopy(&nn, &sigma_predict[0,0], &inc, &filtered_sigmas[t,0,0], &inc)
         dgemm('T', 'N', &n, &n, &p, &neg1, &temp2[0,0], &p, &temp2[0,0], &p, &one, &filtered_sigmas[t,0,0], &n)
         # dsyrk('L','T', &n, &p, &neg1, &temp2[0,0], &p, &one, &filtered_sigmas[t,0,0], &n)
 
+        ### mu_predict = A * filtered_mus[t]
         dgemv('N', &n, &n, &one, &A[0,0], &n, &filtered_mus[t,0], &inc, &zero, &mu_predict[0], &inc)
+
+        ### sigma_predict = A * filtered_sigmas[t] * A' + sigma_states
         dgemm('N', 'N', &n, &n, &n, &one, &A[0,0], &n, &filtered_sigmas[t,0,0], &n, &zero, &temp4[0,0], &n)
         # dsymm('R','L',&n, &n, &one, &filtered_sigmas[t,0,0], &n, &A[0,0], &n, &zero, &temp4[0,0], &n)
         dcopy(&nn, &sigma_states[0,0], &inc, &sigma_predict[0,0], &inc)
