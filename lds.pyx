@@ -1,8 +1,5 @@
 # distutils: extra_compile_args = -O2 -w
-# cython: boundscheck = False
-# cython: nonecheck = False
-# cython: wraparound = False
-# cython: cdivision = True
+# cython: boundscheck = False, nonecheck = False, wraparound = False, cdivision = True
 
 import numpy as np
 cimport numpy as np
@@ -14,14 +11,13 @@ from blas_lapack cimport dsymm, dcopy, dgemm, dpotrf, \
         dgemv, dpotrs, daxpy, dtrtrs, dsyrk, dtrmv
 
 # TODO make switching version
-# TODO make kalman smoother
 # TODO make cholesky update/downdate versions
 # TODO make (generate?) single-precision version
+# TODO make kalman smoother
 
-# NOTE: I tried the dsymm / dsyrk version, and it was slower! (on my laptop)
-# but is it more stable? basic tests suggest that's unimportant. symmetric
-# routines commented out inline below.
+# NOTE: I tried the dsymm / dsyrk version and it was slower, even for larger p!
 # NOTE: for symmetric matrices, F/C order doesn't matter
+# NOTE: clean version of the code is like 1.5-3% slower
 
 def kalman_filter(
     double[::1] mu_init, double[:,:] sigma_init,
@@ -182,16 +178,56 @@ def filter_and_sample(
 
     return np.asarray(randseq)
 
+### cleaner versions
+
+def kalman_filter_clean(
+    double[::1] mu_init, double[:,:] sigma_init,
+    double[:,:] A, double[:,:] sigma_states,
+    double[:,:] C, double[:,:] sigma_obs,
+    double[:,::1] data):
+
+    # allocate temporaries and internals
+    cdef int t, T = data.shape[0]
+    cdef int n = C.shape[1], p = C.shape[0]
+
+    cdef double[::1] mu_predict = np.copy(mu_init,order='F')
+    cdef double[::1,:] sigma_predict = np.copy(sigma_init,order='F')
+
+    cdef double[::1,:] _A = np.asfortranarray(A)
+    cdef double[::1,:] _C = np.asfortranarray(C)
+
+    cdef double[::1,:] temp_pp = np.empty((p,p),order='F')
+    cdef double[::1,:] temp_pn = np.empty((p,n),order='F')
+    cdef double[::1]   temp_p  = np.empty((p,), order='F')
+    cdef double[::1,:] temp_nn = np.empty((n,n),order='F')
+
+    # allocate output
+    cdef double[:,:] filtered_mus = np.empty((T,n))
+    cdef double[:,:,:] filtered_sigmas = np.empty((T,n,n))
+
+    # run filter forwards
+    for t in range(T):
+        condition_on(
+            mu_predict, sigma_predict, _C, sigma_obs, data[t],
+            filtered_mus[t], filtered_sigmas[t],
+            temp_p, temp_pn, temp_pp)
+        predict(
+            filtered_mus[t], filtered_sigmas[t], _A, sigma_states,
+            mu_predict, sigma_predict,
+            temp_nn)
+
+    return np.asarray(filtered_mus), np.asarray(filtered_sigmas)
+
 ### util
 
 cdef inline void condition_on(
     # inputs
-    double[::1] mu_x, double[::1,:] sigma_x,
-    double[::1,:] A, double[::1,:] sigma_obs, double[::1] y,
+    double[:] mu_x, double[:,:] sigma_x,
+    double[::1,:] A, double[:,:] sigma_obs, double[:] y,
     # outputs
-    double[::1] mu_cond, double[::1,:] sigma_cond,
+    double[:] mu_cond, double[:,:] sigma_cond,
     # temps
-    double[::1] temp_p, double[::1,:] temp_pn, double[::1,:] temp_pp,
+    double[:] temp_p, double[:,:] temp_pn, double[:,:] temp_pp,
     ):
     cdef int n = mu_x.shape[0], p = y.shape[0]
     cdef int nn = n*n, pp = p*p
@@ -219,12 +255,12 @@ cdef inline void condition_on(
 
 cdef inline void predict(
     # inputs
-    double[::1] mu, double[::1,:] sigma,
-    double[::1,:] A, double[::1,:] sigma_states,
+    double[:] mu, double[:,:] sigma,
+    double[::1,:] A, double[:,:] sigma_states,
     # outputs
-    double[::1] mu_predict, double[::1,:] sigma_predict,
+    double[:] mu_predict, double[:,:] sigma_predict,
     # temps
-    double[::1,:] temp_nn,
+    double[:,:] temp_nn,
     ):
     cdef int n = mu.shape[0]
     cdef int nn = n*n
@@ -254,6 +290,7 @@ cdef inline void sample_gaussian(
     dpotrf('L', &n, &sigma[0,0], &n, &info)
     dtrmv('L', 'N', 'N', &n, &sigma[0,0], &n, &randvec[0], &inc)
     daxpy(&n, &one, &mu[0], &inc, &randvec[0], &inc)
+
 
 def downdate(double[:,::1] R, double[::1] z):
     chol_downdate(R.shape[0],&R[0,0],&z[0])

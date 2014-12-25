@@ -1,8 +1,5 @@
 # distutils: extra_compile_args = -O3 -w -ffast-math
-# cython: boundscheck = False
-# cython: nonecheck = False
-# cython: wraparound = False
-# cython: cdivision = True
+# cython: boundscheck = False, nonecheck = False, wraparound = False, cdivision = True
 
 from cython cimport floating
 from libc.math cimport sqrt
