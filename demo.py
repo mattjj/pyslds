@@ -6,7 +6,6 @@ import pyhsmm
 from pyhsmm.basic.distributions import Regression, Gaussian
 from autoregressive.distributions import AutoRegression
 from pyhsmm.util.text import progprint_xrange
-from pyhsmm.util.plot import plot_pca
 
 from slds.models import HMMSLDS, WeakLimitStickyHDPHMMSLDS
 
@@ -90,7 +89,7 @@ s.resample_gaussian_states()
 
 
 samples = []
-for itr in progprint_xrange(100):
+for itr in progprint_xrange(500):
     # resample everything except the gaussian_states and the emission
     # distributions
     # s.resample_discrete_states()
