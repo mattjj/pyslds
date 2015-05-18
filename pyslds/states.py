@@ -8,11 +8,61 @@ from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
 from autoregressive.util import AR_striding
 from pylds.lds_messages_interface import filter_and_sample
 
-# TODO special code for diagonal plus low rank
-
 
 class _SLDSStatesMixin(object):
-    ### convenience properties
+    def resample(self,niter=1):
+        for itr in xrange(niter):
+            self.resample_discrete_states()
+            self.resample_gaussian_states()
+
+    ## resampling discrete states
+
+    def resample_discrete_states(self):
+        super(_SLDSStatesMixin,self).resample()
+
+    @property
+    def aBl(self):
+        if self._aBl is None:
+            aBl = self._aBl = np.empty(
+                (self.gaussian_states.shape[0],self.num_states))
+
+            for idx, distn in enumerate(self.init_dynamics_distns):
+                aBl[0,idx] = distn.log_likelihood(self.gaussian_states[0])
+
+            for idx, distn in enumerate(self.dynamics_distns):
+                aBl[1:,idx] = distn.log_likelihood(
+                    self.strided_gaussian_states)
+
+            aBl[np.isnan(aBl).any(1)] = 0.
+        return self._aBl
+
+    ## resampling conditionally Gaussian dynamics
+
+    def resample_gaussian_states(self):
+        self._aBl = None  # clear any caching
+        self._normalizer, self.gaussian_states = filter_and_sample(
+            self.mu_init, self.sigma_init,
+            self.As, self.BBTs, self.Cs, self.DDTs,
+            self.data)
+
+    @property
+    def strided_gaussian_states(self):
+        return AR_striding(self.gaussian_states,1)
+
+    ## generation
+
+    def generate_states(self):
+        super(_SLDSStatesMixin,self).generate_states()
+        self.generate_gaussian_states()
+
+    def generate_gaussian_states(self):
+        # TODO this is dumb, but generating from the prior will be unstable
+        self.gaussian_states = np.random.normal(size=(self.T,self.D_latent))
+
+    def generate_obs(self):
+        raise NotImplementedError
+
+    ## convenience properties
 
     @property
     def D_latent(self):
@@ -61,58 +111,6 @@ class _SLDSStatesMixin(object):
     def DDTs(self):
         Dset = np.concatenate([d.sigma[None,...] for d in self.emission_distns])
         return Dset[self.stateseq]
-
-    ### main stuff
-
-    def resample(self,niter=1):
-        for itr in xrange(niter):
-            self.resample_discrete_states()
-            self.resample_gaussian_states()
-
-    ## resampling discrete states
-
-    def resample_discrete_states(self):
-        super(_SLDSStatesMixin,self).resample()
-
-    @property
-    def aBl(self):
-        if self._aBl is None:
-            aBl = self._aBl = np.empty((self.gaussian_states.shape[0],self.num_states))
-
-            for idx, distn in enumerate(self.init_dynamics_distns):
-                aBl[0,idx] = distn.log_likelihood(self.gaussian_states[0])
-
-            for idx, distn in enumerate(self.dynamics_distns):
-                aBl[1:,idx] = distn.log_likelihood(self.strided_gaussian_states)
-
-            aBl[np.isnan(aBl).any(1)] = 0.
-        return self._aBl
-
-    ## resampling conditionally Gaussian dynamics
-
-    def resample_gaussian_states(self):
-        self._aBl = None  # clear any caching
-        self._normalizer, self.gaussian_states = filter_and_sample(
-            self.mu_init, self.sigma_init,
-            self.As, self.BBTs, self.Cs, self.DDTs,
-            self.data)
-
-    @property
-    def strided_gaussian_states(self):
-        return AR_striding(self.gaussian_states,1)
-
-    ## generation
-
-    def generate_states(self):
-        super(_SLDSStatesMixin,self).generate_states()
-        self.generate_gaussian_states()
-
-    def generate_gaussian_states(self):
-        # TODO this is dumb, but generating from the prior will be unstable
-        self.gaussian_states = np.random.normal(size=(self.T,self.D_latent))
-
-    def generate_obs(self):
-        raise NotImplementedError
 
 
 class HMMSLDSStates(_SLDSStatesMixin,HMMStatesPython):
