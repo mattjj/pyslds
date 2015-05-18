@@ -7,7 +7,7 @@ from pyhsmm.basic.distributions import Regression, Gaussian
 from autoregressive.distributions import AutoRegression
 from pyhsmm.util.text import progprint_xrange
 
-from slds.models import HMMSLDS, WeakLimitStickyHDPHMMSLDS
+from pyslds.models import HMMSLDS, WeakLimitStickyHDPHMMSLDS
 
 ###################
 #  generate data  #

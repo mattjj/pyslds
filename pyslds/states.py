@@ -3,12 +3,13 @@ import numpy as np
 
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
-        GeoHSMMStates, HSMMStatesPossibleChangepoints
+    GeoHSMMStates
 
 from autoregressive.util import AR_striding
+from pylds.lds_messages_interface import filter_and_sample
 
-from pyhsmm.util.profiling import line_profiled
-PROFILING=True
+# TODO special code for diagonal plus low rank
+
 
 class _SLDSStatesMixin(object):
     ### convenience properties
@@ -33,9 +34,36 @@ class _SLDSStatesMixin(object):
     def init_dynamics_distns(self):
         return self.model.init_dynamics_distns
 
+    @property
+    def mu_init(self):
+        return self.init_dynamics_distns[self.stateseq[0]].mu
+
+    @property
+    def sigma_init(self):
+        return self.init_dynamics_distns[self.stateseq[0]].sigma
+
+    @property
+    def As(self):
+        Aset = np.concatenate([d.A[None,...] for d in self.dynamics_distns])
+        return Aset[self.stateseq]
+
+    @property
+    def BBTs(self):
+        Bset = np.concatenate([d.sigma[None,...] for d in self.dynamics_distns])
+        return Bset[self.stateseq]
+
+    @property
+    def Cs(self):
+        Cset = np.concatenate([d.A[None,...] for d in self.emission_distns])
+        return Cset[self.stateseq]
+
+    @property
+    def DDTs(self):
+        Dset = np.concatenate([d.sigma[None,...] for d in self.emission_distns])
+        return Dset[self.stateseq]
+
     ### main stuff
 
-    @line_profiled
     def resample(self,niter=1):
         for itr in xrange(niter):
             self.resample_discrete_states()
@@ -60,22 +88,14 @@ class _SLDSStatesMixin(object):
             aBl[np.isnan(aBl).any(1)] = 0.
         return self._aBl
 
-    ## resampling conditionally linear dynamics
+    ## resampling conditionally Gaussian dynamics
 
-    @line_profiled
     def resample_gaussian_states(self):
-        self._aBl = None # need to clear any caching
-        init_mu, init_sigma = \
-                self.init_dynamics_distns[self.stateseq[0]].mu, \
-                self.init_dynamics_distns[self.stateseq[0]].sigma
-        As, BBTs, Cs, DDTs = map(np.array,zip(*[(
-            self.dynamics_distns[state].A, self.dynamics_distns[state].sigma,
-            self.emission_distns[state].A, self.emission_distns[state].sigma,
-            ) for state in self.stateseq]))
-        self.gaussian_states = kf_resample_lds(
-                init_mu=init_mu, init_sigma=init_sigma,
-                As=As, BBTs=BBTs, Cs=Cs, DDTs=DDTs,
-                emissions=self.data)
+        self._aBl = None  # clear any caching
+        self._normalizer, self.gaussian_states = filter_and_sample(
+            self.mu_init, self.sigma_init,
+            self.As, self.BBTs, self.Cs, self.DDTs,
+            self.data)
 
     @property
     def strided_gaussian_states(self):
@@ -94,77 +114,23 @@ class _SLDSStatesMixin(object):
     def generate_obs(self):
         raise NotImplementedError
 
+
 class HMMSLDSStates(_SLDSStatesMixin,HMMStatesPython):
     pass
+
 
 class HMMSLDSStatesEigen(_SLDSStatesMixin,HMMStatesEigen):
     pass
 
+
 class HSMMSLDSStates(_SLDSStatesMixin,HSMMStatesPython):
     pass
+
 
 class HSMMSLDSStatesEigen(_SLDSStatesMixin,HSMMStatesEigen):
     pass
 
+
 class GeoHSMMSLDSStates(_SLDSStatesMixin,GeoHSMMStates):
     pass
-
-
-# class HSMMSLDSStatesPossibleChangepointsSeparateTrans(
-#         _SLDSStatesMixin,_SeparateTransMixin,HSMMStatesPossibleChangepoints):
-#     pass
-
-
-### kalman filtering and smoothing functions
-
-def kf_resample_lds(init_mu,init_sigma,As,BBTs,Cs,DDTs,emissions):
-    T, D_obs, D_latent = emissions.shape[0], emissions.shape[1], As[0].shape[0]
-
-    filtered_mus = np.empty((T,D_latent))
-    filtered_sigmas = np.empty((T,D_latent,D_latent))
-
-    x = np.empty((T,D_latent))
-
-    # messages forwards
-    prediction_mu, prediction_sigma = init_mu, init_sigma
-    for t, (A,BBT,C,DDT) in enumerate(zip(As,BBTs,Cs,DDTs)):
-        # condition
-        filtered_mus[t], filtered_sigmas[t] = \
-            condition_on(prediction_mu,prediction_sigma,C,DDT,emissions[t])
-
-        # predict
-        prediction_mu, prediction_sigma = \
-            A.dot(filtered_mus[t]), A.dot(filtered_sigmas[t]).dot(A.T) + BBT
-
-        assert np.allclose(prediction_sigma,prediction_sigma.T)
-        assert np.all(np.linalg.eigvalsh(prediction_sigma) > 0)
-
-    # sample backwards
-    x[-1] = np.random.multivariate_normal(filtered_mus[-1],filtered_sigmas[-1])
-    for t in xrange(T-2,-1,-1):
-        x[t] = np.random.multivariate_normal(
-                *condition_on(filtered_mus[t],filtered_sigmas[t],As[t],BBTs[t],x[t+1]))
-
-    return x
-
-def condition_on(mu_x,sigma_x,A,sigma_obs,y):
-    # mu = mu_x + sigma_xy sigma_yy^{-1} (y - A mu_x)
-    # sigma = sigma_x - sigma_xy sigma_yy^{-1} sigma_xy'
-    sigma_xy = sigma_x.dot(A.T)
-    sigma_yy = A.dot(sigma_x).dot(A.T) + sigma_obs
-    mu = mu_x + sigma_xy.dot(solve_psd(sigma_yy, y - A.dot(mu_x)))
-    sigma = sigma_x - sigma_xy.dot(solve_psd(sigma_yy,sigma_xy.T))
-    return mu, symmetrize(sigma)
-
-def symmetrize(A):
-    ret = A+A.T
-    ret /= 2.
-    return ret
-
-solve_psd = np.linalg.solve
-
-# TODO special code for diagonal plus low rank
-# TODO low-level implementation (notes: dposv, dpotrs, dsymv, dsymm, dsyrk,
-# could get chol out of mu_x update then do dtrsm+dsyrk for schur complement,
-# Eigen can do all the same with rankUpdate, LDLT)
 

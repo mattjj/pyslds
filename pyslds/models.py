@@ -1,15 +1,11 @@
 from __future__ import division
 import numpy as np
-from matplotlib import pyplot as plt
-from matplotlib import cm
 
 import pyhsmm
 
 from states import HMMSLDSStates, HMMSLDSStatesEigen, HSMMSLDSStates, \
-        HSMMSLDSStatesEigen, GeoHSMMSLDSStates
+    HSMMSLDSStatesEigen, GeoHSMMSLDSStates
 
-from pyhsmm.util.profiling import line_profiled
-PROFILING=True
 
 class _SLDSMixin(object):
     def __init__(self,dynamics_distns,emission_distns,init_dynamics_distns,**kwargs):
@@ -18,7 +14,6 @@ class _SLDSMixin(object):
         self.emission_distns = emission_distns
         super(_SLDSMixin,self).__init__(obs_distns=self.dynamics_distns,**kwargs)
 
-    @line_profiled
     def resample_parameters(self):
         self.resample_init_dynamics_distns()
         self.resample_dynamics_distns()
@@ -53,11 +48,14 @@ class _SLDSMixin(object):
 class HMMSLDSPython(_SLDSMixin,pyhsmm.models.HMMPython):
     _states_class = HMMSLDSStates
 
+
 class HMMSLDS(_SLDSMixin,pyhsmm.models.HMM):
     _states_class = HMMSLDSStatesEigen
 
+
 class HSMMSLDSPython(_SLDSMixin,pyhsmm.models.HSMMPython):
     _states_class = HSMMSLDSStates
+
 
 class HSMMSLDS(_SLDSMixin,pyhsmm.models.HSMM):
     _states_class = HSMMSLDSStatesEigen
@@ -66,14 +64,11 @@ class HSMMSLDS(_SLDSMixin,pyhsmm.models.HSMM):
 class WeakLimitHDPHMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
+
 class WeakLimitStickyHDPHMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitStickyHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
+
 class WeakLimitHDPHSMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHSMM):
     _states_class = HSMMSLDSStatesEigen
-
-
-# class HSMMSLDSPossibleChangepointsSeparateTrans(
-#         _SLDSMixin,pyhsmm.models.HSMMPossibleChangepointsSeparateTrans):
-#     _states_class = HSMMSLDSStatesPossibleChangepointsSeparateTrans
 
