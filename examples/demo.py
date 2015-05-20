@@ -89,7 +89,7 @@ s.resample_gaussian_states()
 
 
 samples = []
-for itr in progprint_xrange(500):
+for itr in progprint_xrange(2000):
     # resample everything except the gaussian_states and the emission
     # distributions
     # s.resample_discrete_states()
