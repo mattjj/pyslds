@@ -113,7 +113,7 @@ class _SLDSStatesMixin(object):
         return Dset[self.stateseq]
 
 
-class HMMSLDSStates(_SLDSStatesMixin,HMMStatesPython):
+class HMMSLDSStatesPython(_SLDSStatesMixin,HMMStatesPython):
     pass
 
 
@@ -121,7 +121,7 @@ class HMMSLDSStatesEigen(_SLDSStatesMixin,HMMStatesEigen):
     pass
 
 
-class HSMMSLDSStates(_SLDSStatesMixin,HSMMStatesPython):
+class HSMMSLDSStatesPython(_SLDSStatesMixin,HSMMStatesPython):
     pass
 
 
@@ -131,4 +131,3 @@ class HSMMSLDSStatesEigen(_SLDSStatesMixin,HSMMStatesEigen):
 
 class GeoHSMMSLDSStates(_SLDSStatesMixin,GeoHSMMStates):
     pass
-

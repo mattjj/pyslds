@@ -2,7 +2,7 @@ from __future__ import division
 
 import pyhsmm
 
-from states import HMMSLDSStates, HMMSLDSStatesEigen, HSMMSLDSStates, \
+from states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, \
     HSMMSLDSStatesEigen
 
 
@@ -46,7 +46,7 @@ class _SLDSMixin(object):
 
 
 class HMMSLDSPython(_SLDSMixin,pyhsmm.models.HMMPython):
-    _states_class = HMMSLDSStates
+    _states_class = HMMSLDSStatesPython
 
 
 class HMMSLDS(_SLDSMixin,pyhsmm.models.HMM):
@@ -54,7 +54,7 @@ class HMMSLDS(_SLDSMixin,pyhsmm.models.HMM):
 
 
 class HSMMSLDSPython(_SLDSMixin,pyhsmm.models.HSMMPython):
-    _states_class = HSMMSLDSStates
+    _states_class = HSMMSLDSStatesPython
 
 
 class HSMMSLDS(_SLDSMixin,pyhsmm.models.HSMM):
@@ -65,7 +65,9 @@ class WeakLimitHDPHMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
 
-class WeakLimitStickyHDPHMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitStickyHDPHMM):
+class WeakLimitStickyHDPHMMSLDS(
+        _SLDSMixin,
+        pyhsmm.models.WeakLimitStickyHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
 
