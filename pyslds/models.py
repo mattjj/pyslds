@@ -44,7 +44,39 @@ class _SLDSGibbsMixin(_SLDSMixin):
         self._clear_caches()
 
     def resample_obs_distns(self):
-        pass
+        pass  # handled in resample_parameters
+
+
+class _SLDSMeanFieldMixin(_SLDSMixin):
+    def meanfield_update_parameters(self):
+        self.meanfield_update_init_dynamics_distns()
+        self.meanfield_update_dynamics_distns()
+        self.meanfield_update_emission_distns()
+        super(_SLDSMeanFieldMixin, self).meanfield_update_parameters()
+
+    def meanfield_update_init_dynamics_distns(self):
+        for state, d in enumerate(self.init_dynamics_distns):
+            d.meanfieldupdate(
+                [s.E_gaussian_states[0] for s in self.states_list],
+                [s.expected_states[0] for s in self.states_list])
+
+    def meanfield_update_dynamics_distns(self):
+        for state, d in enumerate(self.dynamics_distns):
+            d.meanfieldupdate(
+                stats=(sum(s.E_dynamics_stats[state] for s in self.states_list)))
+
+    def meanfield_update_emission_distns(self):
+        for state, d in enumerate(self.emission_distns):
+            d.meanfieldupdate(
+                stats=(sum(s.E_emission_stats[state] for s in self.states_list)))
+
+    def meanfield_update_obs_distns(self):
+        pass  # handled in meanfield_update_parameters
+
+    ### vlb
+
+    def vlb(self, **kwargs):
+        raise NotImplementedError
 
 
 class HMMSLDSPython(_SLDSGibbsMixin, pyhsmm.models.HMMPython):
