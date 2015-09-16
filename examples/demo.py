@@ -23,7 +23,7 @@ truemodel = autoregressive.models.ARHSMM(
     obs_distns=[AutoRegression(A=A,sigma=0.05*np.eye(2)) for A in As],
     dur_distns=[PoissonDuration(alpha_0=5*50,beta_0=5) for _ in As])
 
-data, labels = truemodel.generate(2000)
+data, labels = truemodel.generate(500)
 data = data[truemodel.nlags:]
 
 plt.figure()
@@ -33,7 +33,7 @@ plt.plot(data[:,0],data[:,1],'bx-')
 #  build model  #
 #################
 
-Nmax = 10          # number of latnt discrete states
+Nmax = 5           # number of latnt discrete states
 P = 2              # latent linear dynamics' dimension
 D = data.shape[1]  # data dimension
 
@@ -45,7 +45,7 @@ dynamics_distns = [
 
 emission_distns = [
     Regression(
-        # A=np.eye(D),sigma=0.1*np.eye(D), # TODO remove special case
+        A=np.eye(D),sigma=0.1*np.eye(D), # TODO remove special case
         nu_0=5,S_0=np.eye(D),M_0=np.zeros((D,P)),K_0=np.eye(P))
     for _ in xrange(Nmax)]
 
@@ -57,7 +57,7 @@ model = WeakLimitStickyHDPHMMSLDS(
     dynamics_distns=dynamics_distns,
     emission_distns=emission_distns,
     init_dynamics_distns=init_dynamics_distns,
-    kappa=5.,alpha=10.,gamma=10.,init_state_concentration=1.)
+    kappa=50.,alpha=5.,gamma=5.,init_state_concentration=1.)
 
 ##################
 #  run sampling  #
@@ -83,7 +83,7 @@ def update(model):
     return s.stateseq.copy()
 
 
-samples = [update(model) for _ in progprint_xrange(500)]
+samples = [update(model) for _ in progprint_xrange(1000)]
 
 plt.matshow(np.vstack(samples+[np.tile(labels,(10,1))]))
 
