@@ -8,6 +8,9 @@ from pyhsmm.util.text import progprint_xrange
 
 from pyslds.models import WeakLimitStickyHDPHMMSLDS
 
+np.random.seed(0)
+
+
 ###################
 #  generate data  #
 ###################
@@ -28,6 +31,7 @@ data = data[truemodel.nlags:]
 
 plt.figure()
 plt.plot(data[:,0],data[:,1],'bx-')
+
 
 #################
 #  build model  #
@@ -59,31 +63,18 @@ model = WeakLimitStickyHDPHMMSLDS(
     init_dynamics_distns=init_dynamics_distns,
     kappa=50.,alpha=5.,gamma=5.,init_state_concentration=1.)
 
+
 ##################
 #  run sampling  #
 ##################
 
-### initialize to ground truth
-# model.add_data(data,stateseq=labels) # TODO needs init when passing in labels
-# s = model.states_list[0]
-# s.gaussian_states = data # setup-dependent!
-
-### initialize to NOTHING! you get NOTHING! initialize from prior
-# model.add_data(data)
-# s = model.states_list[0]
-
-### initialize to all one thing, which seems to work best
-model.add_data(data,stateseq=np.zeros(data.shape[0]))
-s = model.states_list[0]
-s.resample_gaussian_states()
-
-
-def update(model):
+def resample():
     model.resample_model()
-    return s.stateseq.copy()
+    return model.stateseqs[0].copy()
 
 
-samples = [update(model) for _ in progprint_xrange(1000)]
+model.add_data(data)
+samples = [resample() for _ in progprint_xrange(1000)]
 
 plt.matshow(np.vstack(samples+[np.tile(labels,(10,1))]))
 
