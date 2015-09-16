@@ -13,11 +13,13 @@ class _SLDSMixin(object):
         self.emission_distns = emission_distns
         super(_SLDSMixin,self).__init__(obs_distns=self.dynamics_distns,**kwargs)
 
+
+class _SLDSGibbsMixin(_SLDSMixin):
     def resample_parameters(self):
         self.resample_init_dynamics_distns()
         self.resample_dynamics_distns()
         self.resample_emission_distns()
-        super(_SLDSMixin,self).resample_parameters()
+        super(_SLDSGibbsMixin,self).resample_parameters()
 
     def resample_init_dynamics_distns(self):
         for state, d in enumerate(self.init_dynamics_distns):
@@ -45,31 +47,31 @@ class _SLDSMixin(object):
         pass
 
 
-class HMMSLDSPython(_SLDSMixin,pyhsmm.models.HMMPython):
+class HMMSLDSPython(_SLDSGibbsMixin, pyhsmm.models.HMMPython):
     _states_class = HMMSLDSStatesPython
 
 
-class HMMSLDS(_SLDSMixin,pyhsmm.models.HMM):
+class HMMSLDS(_SLDSGibbsMixin, pyhsmm.models.HMM):
     _states_class = HMMSLDSStatesEigen
 
 
-class HSMMSLDSPython(_SLDSMixin,pyhsmm.models.HSMMPython):
+class HSMMSLDSPython(_SLDSGibbsMixin, pyhsmm.models.HSMMPython):
     _states_class = HSMMSLDSStatesPython
 
 
-class HSMMSLDS(_SLDSMixin,pyhsmm.models.HSMM):
+class HSMMSLDS(_SLDSGibbsMixin, pyhsmm.models.HSMM):
     _states_class = HSMMSLDSStatesEigen
 
 
-class WeakLimitHDPHMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHMM):
+class WeakLimitHDPHMMSLDS(_SLDSGibbsMixin, pyhsmm.models.WeakLimitHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
 
 class WeakLimitStickyHDPHMMSLDS(
-        _SLDSMixin,
+        _SLDSGibbsMixin,
         pyhsmm.models.WeakLimitStickyHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
 
-class WeakLimitHDPHSMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHSMM):
+class WeakLimitHDPHSMMSLDS(_SLDSGibbsMixin, pyhsmm.models.WeakLimitHDPHSMM):
     _states_class = HSMMSLDSStatesEigen
