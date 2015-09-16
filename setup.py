@@ -11,4 +11,3 @@ setup(
         'numpy', 'scipy', 'matplotlib',
         'pybasicbayes', 'pyhsmm', 'pylds',
     ])
-
