@@ -16,19 +16,14 @@ import autoregressive
 
 As = [np.array([[np.cos(theta), -np.sin(theta)],
                 [np.sin(theta), np.cos(theta)]])
-      for alpha, theta in ((1.1,0.1),(1.0,-0.1),(0.9,0.25))] \
-    + [np.eye(2)]
-
-# As = [np.hstack((-np.eye(2),2*np.eye(2))),
-#         np.array([[np.cos(np.pi/6),-np.sin(np.pi/6)],[np.sin(np.pi/6),np.cos(np.pi/6)]]).dot(np.hstack((-np.eye(2),np.eye(2)))) + np.hstack((np.zeros((2,2)),np.eye(2))),
-#         np.array([[np.cos(-np.pi/6),-np.sin(-np.pi/6)],[np.sin(-np.pi/6),np.cos(-np.pi/6)]]).dot(np.hstack((-np.eye(2),np.eye(2)))) + np.hstack((np.zeros((2,2)),np.eye(2)))]
+      for alpha, theta in ((1.1,0.1), (1.0,-0.1), (1., 0.))]
 
 truemodel = autoregressive.models.ARHSMM(
     alpha=4.,init_state_concentration=4.,
     obs_distns=[AutoRegression(A=A,sigma=0.05*np.eye(2)) for A in As],
     dur_distns=[PoissonDuration(alpha_0=5*50,beta_0=5) for _ in As])
 
-data, labels = truemodel.generate(1000)
+data, labels = truemodel.generate(2000)
 data = data[truemodel.nlags:]
 
 plt.figure()
@@ -89,9 +84,6 @@ def update(model):
 
 
 samples = [update(model) for _ in progprint_xrange(500)]
-
-plt.plot(s.gaussian_states[:,0],s.gaussian_states[:,1],'r-')
-# plot_pca(s.gaussian_states,'rx-')
 
 plt.matshow(np.vstack(samples+[np.tile(labels,(10,1))]))
 
