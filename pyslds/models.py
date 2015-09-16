@@ -1,10 +1,9 @@
 from __future__ import division
-import numpy as np
 
 import pyhsmm
 
 from states import HMMSLDSStates, HMMSLDSStatesEigen, HSMMSLDSStates, \
-    HSMMSLDSStatesEigen, GeoHSMMSLDSStates
+    HSMMSLDSStatesEigen
 
 
 class _SLDSMixin(object):
@@ -22,22 +21,23 @@ class _SLDSMixin(object):
 
     def resample_init_dynamics_distns(self):
         for state, d in enumerate(self.init_dynamics_distns):
-            d.resample([s.gaussian_states[0]
-                for s in self.states_list if s.stateseq[0] == state])
+            d.resample(
+                [s.gaussian_states[0] for s in self.states_list
+                    if s.stateseq[0] == state])
         self._clear_caches()
 
     def resample_dynamics_distns(self):
         for state, d in enumerate(self.dynamics_distns):
-            d.resample([s.strided_gaussian_states[s.stateseq[:-1] == state]
-                for s in self.states_list])
+            d.resample(
+                [s.strided_gaussian_states[s.stateseq[:-1] == state]
+                 for s in self.states_list])
         self._clear_caches()
 
     def resample_emission_distns(self):
-        # TODO get rid of this hstack by adding separate x,y args to Regression
         for state, d in enumerate(self.emission_distns):
-            d.resample([np.hstack((
-                s.gaussian_states[s.stateseq == state],
-                s.data[s.stateseq == state]))
+            d.resample([
+                (s.gaussian_states[s.stateseq == state],
+                 s.data[s.stateseq == state])
                 for s in self.states_list])
         self._clear_caches()
 
@@ -71,4 +71,3 @@ class WeakLimitStickyHDPHMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitStickyHDPHMM):
 
 class WeakLimitHDPHSMMSLDS(_SLDSMixin,pyhsmm.models.WeakLimitHDPHSMM):
     _states_class = HSMMSLDSStatesEigen
-
