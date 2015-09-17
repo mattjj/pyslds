@@ -126,20 +126,16 @@ class _SLDSStatesMeanField(_SLDSStates):
         # Regression work like this
         if self._mf_aBl is None:
             mf_aBl = self._mf_aBl = np.empty((self.T, self.num_states))
-            ids, eds, dds = self.init_dynamics_distns, self.emission_distns, \
-                self.dynamics_distns
-            Ees, Eds = self.E_emission_stats, self.E_dynamics_stats
+            ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
+                self.emission_distns
 
-            for idx, (d1, d2) in enumerate(zip(ids, eds)):
+            for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
                 mf_aBl[0,idx] = d1.expected_log_likelihood(
-                    stats=(self.smoothed_mus[0],self.smoothed_sigmas[0]))
-                mf_aBl[0,idx] += d2.expected_log_likelihood(
-                    stats=tuple(stat[0] for stat in Ees))
-
-            for idx, (d1, d2) in enumerate(zip(dds, eds)):
-                mf_aBl[1:,idx] = d1.expected_log_likelihood(stats=Eds)
-                mf_aBl[1:,idx] += d2.expected_log_likelihood(
-                    stats=tuple(stat[1:] for stat in Ees))
+                    stats=(self.smoothed_mus[0], self.ExxT[0]))
+                mf_aBl[:-1,idx] = d2.expected_log_likelihood(
+                    stats=self.E_dynamics_stats)
+                mf_aBl[:,idx] += d3.expected_log_likelihood(
+                    stats=self.E_emission_stats)
 
             mf_aBl[np.isnan(mf_aBl).any(1)] = 0.
         return self._mf_aBl
@@ -166,13 +162,13 @@ class _SLDSStatesMeanField(_SLDSStates):
         assert not np.isnan(smoothed_sigmas).any()
 
         # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
-        EyyT = self.data[:,:,None] * self.data[:,None,:]  # TODO compute once
-        EyxT = self.data[:,:,None] * self.smoothed_mus[:,None,:]
-        ExxT = smoothed_sigmas \
+        EyyT = self.EyyT = self.data[:,:,None] * self.data[:,None,:]  # TODO compute once
+        EyxT = self.EyxT = self.data[:,:,None] * self.smoothed_mus[:,None,:]
+        ExxT = self.ExxT = smoothed_sigmas \
             + self.smoothed_mus[:,:,None] * self.smoothed_mus[:,None,:]
 
-        E_xtp1_xtp1T = ExxT[1:]
-        E_xt_xtT = ExxT[:-1]
+        E_xtp1_xtp1T = self.E_xtp1_xtp1T = ExxT[1:]
+        E_xt_xtT = self.E_xt_xtT = ExxT[:-1]
 
         T = self.T
         self.E_emission_stats = (EyyT, EyxT, ExxT, np.ones(T))
