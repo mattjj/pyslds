@@ -91,18 +91,13 @@ class _SLDSStatesGibbs(_SLDSStates):
     def aBl(self):
         if self._aBl is None:
             aBl = self._aBl = np.empty((self.T, self.num_states))
-            ids, eds, dds = self.init_dynamics_distns, self.emission_distns, \
-                self.dynamics_distns
+            ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
+                self.emission_distns
 
-            for idx, (d1, d2) in enumerate(zip(ids, eds)):
+            for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
                 aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
-                aBl[0,idx] += d2.log_likelihood(
-                    (self.gaussian_states[0], self.data[0]))
-
-            for idx, (d1, d2) in enumerate(zip(dds, eds)):
-                aBl[1:,idx] = d1.log_likelihood(self.strided_gaussian_states)
-                aBl[1:,idx] += d2.log_likelihood(
-                    (self.gaussian_states[1:], self.data[1:]))
+                aBl[:-1,idx] = d2.log_likelihood(self.strided_gaussian_states)
+                aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data))
 
             aBl[np.isnan(aBl).any(1)] = 0.
         return self._aBl

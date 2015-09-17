@@ -63,7 +63,7 @@ model = WeakLimitStickyHDPHMMSLDS(
     dynamics_distns=dynamics_distns,
     emission_distns=emission_distns,
     init_dynamics_distns=init_dynamics_distns,
-    kappa=5.,alpha=10.,gamma=20.,init_state_distn='uniform')
+    kappa=50.,alpha=5.,gamma=20.,init_state_distn='uniform')
 
 
 ##################
