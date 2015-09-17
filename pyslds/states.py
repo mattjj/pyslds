@@ -99,6 +99,9 @@ class _SLDSStatesGibbs(_SLDSStates):
                 aBl[1:,idx] = distn.log_likelihood(
                     self.strided_gaussian_states)
 
+            # TODO TODO this is missing a component: should include emission
+            # probs!
+
             aBl[np.isnan(aBl).any(1)] = 0.
         return self._aBl
 
@@ -130,7 +133,6 @@ class _SLDSStatesMeanField(_SLDSStates):
                     stats=(self.smoothed_mus[0],self.smoothed_sigmas[0]))
 
             for idx, distn in enumerate(self.dynamics_distns):
-                # TODO make self.E_dynamics_stats pass the right *sequences*
                 mf_aBl[1:,idx] = distn.expected_log_likelihood(
                     stats=self.E_dynamics_stats)
 

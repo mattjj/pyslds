@@ -61,14 +61,20 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
                 [s.expected_states[0] for s in self.states_list])
 
     def meanfield_update_dynamics_distns(self):
+        def E_dyn_stats(i, s):
+            return [s.expected_states[i].dot(stat) for stat in s.E_dynamics_stats]
+
         for state, d in enumerate(self.dynamics_distns):
             d.meanfieldupdate(
-                stats=(sum(s.E_dynamics_stats[state] for s in self.states_list)))
+                stats=(sum(E_dyn_stats(state,s) for s in self.states_list)))
 
     def meanfield_update_emission_distns(self):
+        def E_emi_stats(i, s):
+            return [s.expected_states[i].dot(stat) for stat in s.E_emission_stats]
+
         for state, d in enumerate(self.emission_distns):
             d.meanfieldupdate(
-                stats=(sum(s.E_emission_stats[state] for s in self.states_list)))
+                stats=(sum(E_emi_stats(state,s) for s in self.states_list)))
 
     def meanfield_update_obs_distns(self):
         pass  # handled in meanfield_update_parameters
