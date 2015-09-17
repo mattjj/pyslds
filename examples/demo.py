@@ -93,8 +93,9 @@ def resample2(itr):
 # TODO show truth in a separate imshow with same axis
 # samples[200:] = labels
 
-samples = np.empty((200, data.shape[0]))
-samples[:200] = model.stateseqs[0]
+n_show = 100
+samples = np.empty((n_show, data.shape[0]))
+samples[:n_show] = model.stateseqs[0]
 
 im = plt.matshow(samples[::-1])
 fig = plt.gcf()
@@ -122,8 +123,8 @@ for itr in count():
         # don't resample emission distns yet!
         model.resample_dynamics_distns()
         model.resample_init_dynamics_distns()
-    samples[itr % 200] = model.stateseqs[0]
+    samples[itr % n_show] = model.stateseqs[0]
 
     im.set_array(samples[::-1])
     ax.draw_artist(im)
-    fig.canvas.blit(Bbox.from_bounds(xo,yo+h*(itr % 200)-1,w,h+2))
+    fig.canvas.blit(Bbox.from_bounds(xo,yo+h*(itr % n_show),w,h+1))
