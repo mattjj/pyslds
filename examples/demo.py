@@ -27,7 +27,7 @@ truemodel = autoregressive.models.ARHSMM(
     dur_distns=[PoissonDuration(alpha_0=5*50,beta_0=5) for _ in As])
 
 truemodel.prefix = np.array([[0.,3.]])
-data, labels = truemodel.generate(500)
+data, labels = truemodel.generate(1000)
 data = data[truemodel.nlags:]
 
 plt.figure()
@@ -45,13 +45,13 @@ D = data.shape[1]  # data dimension
 dynamics_distns = [
     AutoRegression(
         A=np.eye(P),sigma=np.eye(P),
-        nu_0=4.,S_0=0.5*np.eye(P),M_0=np.zeros((P,P)),K_0=100.*np.eye(P))
+        nu_0=4.,S_0=4.*np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
     for _ in xrange(Nmax)]
 
 emission_distns = [
     Regression(
         A=np.eye(D),sigma=0.05*np.eye(D),
-        nu_0=20.,S_0=np.eye(D),M_0=np.eye(2),K_0=0.1*np.eye(P))
+        nu_0=20.,S_0=20.*np.eye(D),M_0=np.eye(2),K_0=0.01*np.eye(P))
     for _ in xrange(Nmax)]
 
 
@@ -63,7 +63,7 @@ model = WeakLimitStickyHDPHMMSLDS(
     dynamics_distns=dynamics_distns,
     emission_distns=emission_distns,
     init_dynamics_distns=init_dynamics_distns,
-    kappa=10.,alpha=3.,gamma=20.,init_state_distn='uniform')
+    kappa=20.,alpha=5.,gamma=20.,init_state_distn='uniform')
 
 
 ##################
@@ -71,8 +71,7 @@ model = WeakLimitStickyHDPHMMSLDS(
 ##################
 
 model.add_data(data)
-
-model.states_list[0].niter = 5
+# model.states_list[0].niter = 10
 
 # cheating!
 # model.add_data(data, stateseq=labels)
@@ -92,10 +91,11 @@ def resample2(itr):
     model.resample_model()
     return model.stateseqs[0]
 
+# TODO show truth in a separate imshow with same axis
+# samples[200:] = labels
 
-samples = np.empty((210, data.shape[0]))
+samples = np.empty((200, data.shape[0]))
 samples[:200] = model.stateseqs[0]
-samples[200:] = labels
 
 im = plt.matshow(samples[::-1])
 fig = plt.gcf()
