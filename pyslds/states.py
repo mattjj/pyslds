@@ -89,18 +89,22 @@ class _SLDSStates(object):
 class _SLDSStatesGibbs(_SLDSStates):
     @property
     def aBl(self):
+        # TODO check that expected_log_likelihood calls in Gaussian and
+        # Regression work like this
         if self._aBl is None:
             aBl = self._aBl = np.empty((self.T, self.num_states))
+            ids, eds, dds = self.init_dynamics_distns, self.emission_distns, \
+                self.dynamics_distns
 
-            for idx, distn in enumerate(self.init_dynamics_distns):
-                aBl[0,idx] = distn.log_likelihood(self.gaussian_states[0])
+            for idx, (d1, d2) in enumerate(zip(ids, eds)):
+                aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
+                aBl[0,idx] += d2.log_likelihood(
+                    self.gaussian_states[0], self.data[0])
 
-            for idx, distn in enumerate(self.dynamics_distns):
-                aBl[1:,idx] = distn.log_likelihood(
-                    self.strided_gaussian_states)
-
-            # TODO TODO this is missing a component: should include emission
-            # probs!
+            for idx, (d1, d2) in enumerate(zip(dds, eds)):
+                aBl[1:,idx] = d1.log_likelihood(self.strided_gaussian_states)
+                aBl[1:,idx] += d2.log_likelihood(
+                    self.gaussian_states[1:], self.data[1:])
 
             aBl[np.isnan(aBl).any(1)] = 0.
         return self._aBl
@@ -124,17 +128,24 @@ class _SLDSStatesGibbs(_SLDSStates):
 class _SLDSStatesMeanField(_SLDSStates):
     @property
     def mf_aBl(self):
+        # TODO check that expected_log_likelihood calls in Gaussian and
+        # Regression work like this
         if self._mf_aBl is None:
             mf_aBl = self._mf_aBl = np.empty((self.T, self.num_states))
+            ids, eds, dds = self.init_dynamics_distns, self.emission_distns, \
+                self.dynamics_distns
+            Ees, Eds = self.E_emission_stats, self.E_dynamics_stats
 
-            for idx, distn in enumerate(self.init_dynamics_distns):
-                # TODO make Gaussian expected_log_likelihood work like this
-                mf_aBl[0,idx] = distn.expected_log_likelihood(
+            for idx, (d1, d2) in enumerate(zip(ids, eds)):
+                mf_aBl[0,idx] = d1.expected_log_likelihood(
                     stats=(self.smoothed_mus[0],self.smoothed_sigmas[0]))
+                mf_aBl[0,idx] += d2.expected_log_likelihood(
+                    stats=tuple(stat[0] for stat in Ees))
 
-            for idx, distn in enumerate(self.dynamics_distns):
-                mf_aBl[1:,idx] = distn.expected_log_likelihood(
-                    stats=self.E_dynamics_stats)
+            for idx, (d1, d2) in enumerate(zip(dds, eds)):
+                mf_aBl[1:,idx] = d1.expected_log_likelihood(stats=Eds)
+                mf_aBl[1:,idx] += d2.expected_log_likelihood(
+                    stats=tuple(stat[1:] for stat in Ees))
 
             mf_aBl[np.isnan(mf_aBl).any(1)] = 0.
         return self._mf_aBl
@@ -165,7 +176,7 @@ class _SLDSStatesMeanField(_SLDSStates):
             + self.smoothed_mus[:,:,None] * self.smoothed_mus[:,None,:]
 
         E_xtp1_xtp1T = ExxT[1:]
-        E_xt_xtT = smoothed_sigmas[:-1]
+        E_xt_xtT = ExxT[:-1]
 
         T = self.T
         self.E_emission_stats = (EyyT, EyxT, ExxT, np.ones(T))
