@@ -89,8 +89,6 @@ class _SLDSStates(object):
 class _SLDSStatesGibbs(_SLDSStates):
     @property
     def aBl(self):
-        # TODO check that expected_log_likelihood calls in Gaussian and
-        # Regression work like this
         if self._aBl is None:
             aBl = self._aBl = np.empty((self.T, self.num_states))
             ids, eds, dds = self.init_dynamics_distns, self.emission_distns, \
@@ -99,12 +97,12 @@ class _SLDSStatesGibbs(_SLDSStates):
             for idx, (d1, d2) in enumerate(zip(ids, eds)):
                 aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
                 aBl[0,idx] += d2.log_likelihood(
-                    self.gaussian_states[0], self.data[0])
+                    (self.gaussian_states[0], self.data[0]))
 
             for idx, (d1, d2) in enumerate(zip(dds, eds)):
                 aBl[1:,idx] = d1.log_likelihood(self.strided_gaussian_states)
                 aBl[1:,idx] += d2.log_likelihood(
-                    self.gaussian_states[1:], self.data[1:])
+                    (self.gaussian_states[1:], self.data[1:]))
 
             aBl[np.isnan(aBl).any(1)] = 0.
         return self._aBl
@@ -151,6 +149,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         return self._mf_aBl
 
     def meanfieldupdate(self, niter=1):
+        # TODO make niter an __init__ arg instead of a method arg here
         for itr in xrange(niter):
             self.meanfield_update_discrete_states()
             self.meanfield_update_gaussian_states()
@@ -159,6 +158,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
 
     def meanfield_update_gaussian_states(self):
+        # TODO like meanfieldupdate in pylds.states.LDSStates
         raise NotImplementedError
 
     def vlb(self):
