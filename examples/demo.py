@@ -45,7 +45,7 @@ D = data.shape[1]  # data dimension
 dynamics_distns = [
     AutoRegression(
         A=np.eye(P),sigma=np.eye(P),
-        nu_0=4.,S_0=4.*np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
+        nu_0=2,S_0=2.*np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
     for _ in xrange(Nmax)]
 
 emission_distns = [
@@ -63,7 +63,7 @@ model = WeakLimitStickyHDPHMMSLDS(
     dynamics_distns=dynamics_distns,
     emission_distns=emission_distns,
     init_dynamics_distns=init_dynamics_distns,
-    kappa=20.,alpha=5.,gamma=20.,init_state_distn='uniform')
+    kappa=5.,alpha=10.,gamma=20.,init_state_distn='uniform')
 
 
 ##################
@@ -71,7 +71,6 @@ model = WeakLimitStickyHDPHMMSLDS(
 ##################
 
 model.add_data(data)
-# model.states_list[0].niter = 10
 
 # cheating!
 # model.add_data(data, stateseq=labels)
