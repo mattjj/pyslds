@@ -19,7 +19,7 @@ import autoregressive
 
 As = [np.array([[np.cos(theta), -np.sin(theta)],
                 [np.sin(theta), np.cos(theta)]])
-      for alpha, theta in ((0.95,0.2), (0.95,-0.2), (1., 0.))]
+      for alpha, theta in ((0.95,0.1), (0.95,-0.1), (1., 0.))]
 
 truemodel = autoregressive.models.ARHSMM(
     alpha=4.,init_state_concentration=4.,
@@ -38,7 +38,7 @@ plt.plot(data[:,0],data[:,1],'bx-')
 #  build model  #
 #################
 
-Nmax = 5           # number of latnt discrete states
+Nmax = 10          # number of latnt discrete states
 P = 2              # latent linear dynamics' dimension
 D = data.shape[1]  # data dimension
 
@@ -51,7 +51,7 @@ dynamics_distns = [
 emission_distns = [
     Regression(
         A=np.eye(D),sigma=0.05*np.eye(D),
-        nu_0=20.,S_0=20.*np.eye(D),M_0=np.eye(2),K_0=0.01*np.eye(P))
+        nu_0=20,S_0=np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
     for _ in xrange(Nmax)]
 
 
@@ -63,68 +63,51 @@ model = WeakLimitStickyHDPHMMSLDS(
     dynamics_distns=dynamics_distns,
     emission_distns=emission_distns,
     init_dynamics_distns=init_dynamics_distns,
-    kappa=50.,alpha=5.,gamma=20.,init_state_distn='uniform')
+    kappa=100.,alpha=3.,gamma=3.,init_state_distn='uniform')
+
+model.add_data(data)
+model.resample_states()
 
 
 ##################
 #  run sampling  #
 ##################
 
-model.add_data(data)
-
-# cheating!
-# model.add_data(data, stateseq=labels)
-# for _ in progprint_xrange(1000):
-#     model.states_list[0].resample_gaussian_states()
-#     model.resample_parameters()
-
-
-def resample(itr):
-    # model.resample_model()
-    model.states_list[0].resample_gaussian_states()
-    model.states_list[0].resample_discrete_states()
-    return model.stateseqs[0]
-
-
-def resample2(itr):
-    model.resample_model()
-    return model.stateseqs[0]
-
-# TODO show truth in a separate imshow with same axis
-# samples[200:] = labels
+from matplotlib.transforms import Bbox
+import matplotlib.gridspec as gridspec
 
 n_show = 100
 samples = np.empty((n_show, data.shape[0]))
 samples[:n_show] = model.stateseqs[0]
 
-im = plt.matshow(samples[::-1])
-fig = plt.gcf()
-ax = plt.gca()
+fig = plt.figure(figsize=(8,3))
+gs = gridspec.GridSpec(6,1)
+ax1 = fig.add_subplot(gs[:-1])
+ax2 = fig.add_subplot(gs[-1], sharex=ax1)
 
-ax.autoscale(False)
+im = ax1.matshow(samples[::-1], aspect='auto')
+ax1.autoscale(False)
+ax1.set_xticks([])
+ax1.set_yticks([])
+xo, yo, w, ht = ax1.bbox.bounds
+h = ht / n_show
+
+ax2.matshow(labels[None,:], aspect='auto')
+ax2.set_xticks([])
+ax2.set_yticks([])
+
 
 plt.draw()
 plt.ion()
 plt.show()
 
-from matplotlib.transforms import Bbox
-
-xo, yo, w, ht = ax.bbox.bounds
-h = ht / samples.shape[0]
 
 from itertools import count
 for itr in count():
-    if itr >= 0:
-        model.resample_model()
-    else:
-        model.resample_states()
-        model.resample_hmm_parameters()
+    model.resample_model()
 
-        # don't resample emission distns yet!
-        model.resample_dynamics_distns()
-        model.resample_init_dynamics_distns()
     samples[itr % n_show] = model.stateseqs[0]
-
     im.set_array(samples[::-1])
-    ax.draw_artist(im)
-    fig.canvas.blit(Bbox.from_bounds(xo,yo+h*(itr % n_show),w,h+1))
+    ax1.draw_artist(im)
+    fig.canvas.blit(ax1.bbox)
+    fig.canvas.blit(Bbox.from_bounds(xo,yo+h*(itr % n_show)+h,w,h))
