@@ -9,50 +9,15 @@ from autoregressive.util import AR_striding
 from pylds.lds_messages_interface import filter_and_sample
 
 
-class _SLDSStatesMixin(object):
-    def resample(self,niter=1):
-        for itr in xrange(niter):
-            self.resample_discrete_states()
-            self.resample_gaussian_states()
+###########
+#  bases  #
+###########
 
-    ## resampling discrete states
-
-    def resample_discrete_states(self):
-        super(_SLDSStatesMixin,self).resample()
-
-    @property
-    def aBl(self):
-        if self._aBl is None:
-            aBl = self._aBl = np.empty(
-                (self.gaussian_states.shape[0],self.num_states))
-
-            for idx, distn in enumerate(self.init_dynamics_distns):
-                aBl[0,idx] = distn.log_likelihood(self.gaussian_states[0])
-
-            for idx, distn in enumerate(self.dynamics_distns):
-                aBl[1:,idx] = distn.log_likelihood(
-                    self.strided_gaussian_states)
-
-            aBl[np.isnan(aBl).any(1)] = 0.
-        return self._aBl
-
-    ## resampling conditionally Gaussian dynamics
-
-    def resample_gaussian_states(self):
-        self._aBl = None  # clear any caching
-        self._normalizer, self.gaussian_states = filter_and_sample(
-            self.mu_init, self.sigma_init,
-            self.As, self.BBTs, self.Cs, self.DDTs,
-            self.data)
-
-    @property
-    def strided_gaussian_states(self):
-        return AR_striding(self.gaussian_states,1)
-
-    ## generation
+class _SLDSStates(object):
+    ### generation
 
     def generate_states(self):
-        super(_SLDSStatesMixin,self).generate_states()
+        super(_SLDSStates,self).generate_states()
         self.generate_gaussian_states()
 
     def generate_gaussian_states(self):
@@ -63,6 +28,10 @@ class _SLDSStatesMixin(object):
         raise NotImplementedError
 
     ## convenience properties
+
+    @property
+    def strided_gaussian_states(self):
+        return AR_striding(self.gaussian_states,1)
 
     @property
     def D_latent(self):
@@ -113,21 +82,114 @@ class _SLDSStatesMixin(object):
         return Dset[self.stateseq]
 
 
-class HMMSLDSStatesPython(_SLDSStatesMixin,HMMStatesPython):
+######################
+#  algorithm mixins  #
+######################
+
+class _SLDSStatesGibbs(_SLDSStates):
+    @property
+    def aBl(self):
+        if self._aBl is None:
+            aBl = self._aBl = np.empty((self.T, self.num_states))
+
+            for idx, distn in enumerate(self.init_dynamics_distns):
+                aBl[0,idx] = distn.log_likelihood(self.gaussian_states[0])
+
+            for idx, distn in enumerate(self.dynamics_distns):
+                aBl[1:,idx] = distn.log_likelihood(
+                    self.strided_gaussian_states)
+
+            aBl[np.isnan(aBl).any(1)] = 0.
+        return self._aBl
+
+    def resample(self, niter=1):
+        for itr in xrange(niter):
+            self.resample_discrete_states()
+            self.resample_gaussian_states()
+
+    def resample_discrete_states(self):
+        super(_SLDSStatesGibbs, self).resample()
+
+    def resample_gaussian_states(self):
+        self._aBl = None  # clear any caching
+        self._normalizer, self.gaussian_states = filter_and_sample(
+            self.mu_init, self.sigma_init,
+            self.As, self.BBTs, self.Cs, self.DDTs,
+            self.data)
+
+
+class _SLDSStatesMeanField(_SLDSStates):
+    @property
+    def mf_aBl(self):
+        if self._mf_aBl is None:
+            mf_aBl = self._mf_aBl = np.empty((self.T, self.num_states))
+
+            for idx, distn in enumerate(self.init_dynamics_distns):
+                # TODO make Gaussian expected_log_likelihood work like this
+                mf_aBl[0,idx] = distn.expected_log_likelihood(
+                    stats=(self.smoothed_mus[0],self.smoothed_sigmas[0]))
+
+            for idx, distn in enumerate(self.dynamics_distns):
+                # TODO make self.E_dynamics_stats pass the right *sequences*
+                mf_aBl[1:,idx] = distn.expected_log_likelihood(
+                    stats=self.E_dynamics_stats)
+
+            mf_aBl[np.isnan(mf_aBl).any(1)] = 0.
+        return self._mf_aBl
+
+    def meanfieldupdate(self, niter=1):
+        for itr in xrange(niter):
+            self.meanfield_update_discrete_states()
+            self.meanfield_update_gaussian_states()
+
+    def meanfield_update_discrete_states(self):
+        super(_SLDSStatesMeanField, self).meanfieldupdate()
+
+    def meanfield_update_gaussian_states(self):
+        raise NotImplementedError
+
+    def vlb(self):
+        raise NotImplementedError  # TODO
+
+    def _set_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
+        assert not np.isnan(E_xtp1_xtT).any()
+        assert not np.isnan(smoothed_mus).any()
+        assert not np.isnan(smoothed_sigmas).any()
+
+        # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
+        EyyT = self.data[:,:,None] * self.data[:,None,:]  # TODO compute once
+        EyxT = self.data[:,:,None] * self.smoothed_mus[:,None,:]
+        ExxT = smoothed_sigmas \
+            + self.smoothed_mus[:,:,None] * self.smoothed_mus[:,None,:]
+
+        E_xtp1_xtp1T = ExxT[1:]
+        E_xt_xtT = smoothed_sigmas[:-1]
+
+        T = self.T
+        self.E_emission_stats = (EyyT, EyxT, ExxT, np.ones(T))
+        self.E_dynamics_stats = \
+            (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T-1))
+
+
+####################
+#  states classes  #
+####################
+
+class HMMSLDSStatesPython(_SLDSStatesGibbs, HMMStatesPython):
     pass
 
 
-class HMMSLDSStatesEigen(_SLDSStatesMixin,HMMStatesEigen):
+class HMMSLDSStatesEigen(_SLDSStatesGibbs, HMMStatesEigen):
     pass
 
 
-class HSMMSLDSStatesPython(_SLDSStatesMixin,HSMMStatesPython):
+class HSMMSLDSStatesPython(_SLDSStatesGibbs, HSMMStatesPython):
     pass
 
 
-class HSMMSLDSStatesEigen(_SLDSStatesMixin,HSMMStatesEigen):
+class HSMMSLDSStatesEigen(_SLDSStatesGibbs, HSMMStatesEigen):
     pass
 
 
-class GeoHSMMSLDSStates(_SLDSStatesMixin,GeoHSMMStates):
+class GeoHSMMSLDSStates(_SLDSStatesGibbs, GeoHSMMStates):
     pass

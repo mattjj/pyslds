@@ -76,7 +76,7 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
     ### vlb
 
     def vlb(self, **kwargs):
-        raise NotImplementedError
+        raise NotImplementedError  # TODO
 
 
 class HMMSLDSPython(_SLDSGibbsMixin, pyhsmm.models.HMMPython):
