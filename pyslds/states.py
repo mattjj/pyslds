@@ -108,6 +108,7 @@ class _SLDSStatesGibbs(_SLDSStates):
         return self._aBl
 
     def resample(self, niter=1):
+        niter = self.niter if hasattr(self, 'niter') else niter
         for itr in xrange(niter):
             self.resample_discrete_states()
             self.resample_gaussian_states()

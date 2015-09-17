@@ -19,13 +19,14 @@ import autoregressive
 
 As = [np.array([[np.cos(theta), -np.sin(theta)],
                 [np.sin(theta), np.cos(theta)]])
-      for alpha, theta in ((1.1,0.1), (1.0,-0.1), (1., 0.))]
+      for alpha, theta in ((0.95,0.2), (0.95,-0.2), (1., 0.))]
 
 truemodel = autoregressive.models.ARHSMM(
     alpha=4.,init_state_concentration=4.,
     obs_distns=[AutoRegression(A=A,sigma=0.05*np.eye(2)) for A in As],
     dur_distns=[PoissonDuration(alpha_0=5*50,beta_0=5) for _ in As])
 
+truemodel.prefix = np.array([[0.,3.]])
 data, labels = truemodel.generate(500)
 data = data[truemodel.nlags:]
 
@@ -44,38 +45,86 @@ D = data.shape[1]  # data dimension
 dynamics_distns = [
     AutoRegression(
         A=np.eye(P),sigma=np.eye(P),
-        nu_0=2*P,S_0=2*P*np.eye(P),M_0=np.zeros((P,P)),K_0=np.eye(P))
+        nu_0=4.,S_0=0.5*np.eye(P),M_0=np.zeros((P,P)),K_0=100.*np.eye(P))
     for _ in xrange(Nmax)]
 
 emission_distns = [
     Regression(
-        A=np.eye(D),sigma=0.1*np.eye(D), # TODO remove special case
-        nu_0=5,S_0=np.eye(D),M_0=np.zeros((D,P)),K_0=np.eye(P))
+        A=np.eye(D),sigma=0.05*np.eye(D),
+        nu_0=20.,S_0=np.eye(D),M_0=np.eye(2),K_0=0.1*np.eye(P))
     for _ in xrange(Nmax)]
 
+
 init_dynamics_distns = [
-    Gaussian(nu_0=5,sigma_0=np.eye(P),mu_0=np.zeros(P),kappa_0=1.)
+    Gaussian(nu_0=3,sigma_0=3.*np.eye(P),mu_0=np.zeros(P),kappa_0=0.01)
     for _ in xrange(Nmax)]
 
 model = WeakLimitStickyHDPHMMSLDS(
     dynamics_distns=dynamics_distns,
     emission_distns=emission_distns,
     init_dynamics_distns=init_dynamics_distns,
-    kappa=50.,alpha=5.,gamma=5.,init_state_concentration=1.)
+    kappa=10.,alpha=3.,gamma=20.,init_state_distn='uniform')
 
 
 ##################
 #  run sampling  #
 ##################
 
-def resample():
-    model.resample_model()
-    return model.stateseqs[0].copy()
-
-
 model.add_data(data)
-samples = [resample() for _ in progprint_xrange(1000)]
 
-plt.matshow(np.vstack(samples+[np.tile(labels,(10,1))]))
+model.states_list[0].niter = 5
 
+# cheating!
+# model.add_data(data, stateseq=labels)
+# for _ in progprint_xrange(1000):
+#     model.states_list[0].resample_gaussian_states()
+#     model.resample_parameters()
+
+
+def resample(itr):
+    # model.resample_model()
+    model.states_list[0].resample_gaussian_states()
+    model.states_list[0].resample_discrete_states()
+    return model.stateseqs[0]
+
+
+def resample2(itr):
+    model.resample_model()
+    return model.stateseqs[0]
+
+
+samples = np.empty((210, data.shape[0]))
+samples[:200] = model.stateseqs[0]
+samples[200:] = labels
+
+im = plt.matshow(samples[::-1])
+fig = plt.gcf()
+ax = plt.gca()
+
+ax.autoscale(False)
+
+plt.draw()
+plt.ion()
 plt.show()
+
+from matplotlib.transforms import Bbox
+
+xo, yo, w, ht = ax.bbox.bounds
+h = ht / samples.shape[0]
+
+from itertools import count
+for itr in count():
+    if itr >= 0:
+        model.resample_model()
+    else:
+        model.resample_states()
+        model.resample_hmm_parameters()
+
+        # don't resample emission distns yet!
+        model.resample_dynamics_distns()
+        model.resample_init_dynamics_distns()
+    samples[itr % 200] = model.stateseqs[0]
+
+    im.set_array(samples[::-1])
+    ax.draw_artist(im)
+    fig.canvas.blit(Bbox.from_bounds(xo,yo+h*(itr % 200)-1,w,h+2))

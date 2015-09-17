@@ -16,9 +16,15 @@ class _SLDSMixin(object):
 
 class _SLDSGibbsMixin(_SLDSMixin):
     def resample_parameters(self):
+        self.resample_lds_parameters()
+        self.resample_hmm_parameters()
+
+    def resample_lds_parameters(self):
         self.resample_init_dynamics_distns()
         self.resample_dynamics_distns()
         self.resample_emission_distns()
+
+    def resample_hmm_parameters(self):
         super(_SLDSGibbsMixin,self).resample_parameters()
 
     def resample_init_dynamics_distns(self):
