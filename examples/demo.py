@@ -51,7 +51,7 @@ dynamics_distns = [
 emission_distns = [
     Regression(
         A=np.eye(D),sigma=0.05*np.eye(D),
-        nu_0=20,S_0=np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
+        nu_0=5.,S_0=np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
     for _ in xrange(Nmax)]
 
 
@@ -76,7 +76,7 @@ model.resample_states()
 from matplotlib.transforms import Bbox
 import matplotlib.gridspec as gridspec
 
-n_show = 100
+n_show = 50
 samples = np.empty((n_show, data.shape[0]))
 samples[:n_show] = model.stateseqs[0]
 

@@ -8,6 +8,9 @@ from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
 from autoregressive.util import AR_striding
 from pylds.lds_messages_interface import filter_and_sample
 
+# TODO on instantiating, maybe gaussian states should be resampled
+# TODO use mean field to initialize hmm states and vice-versa
+
 
 ###########
 #  bases  #
@@ -131,7 +134,7 @@ class _SLDSStatesMeanField(_SLDSStates):
 
             for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
                 mf_aBl[0,idx] = d1.expected_log_likelihood(
-                    stats=(self.smoothed_mus[0], self.ExxT[0]))
+                    stats=(self.smoothed_mus[0], self.ExxT[0], 1.))
                 mf_aBl[:-1,idx] = d2.expected_log_likelihood(
                     stats=self.E_dynamics_stats)
                 mf_aBl[:,idx] += d3.expected_log_likelihood(
