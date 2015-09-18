@@ -3,6 +3,7 @@ import numpy as np
 
 from pybasicbayes.util.stats import mniw_expectedstats
 
+from pyhsmm.util.cstats import count_transitions
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
     GeoHSMMStates
@@ -114,7 +115,9 @@ class _SLDSStatesGibbs(_SLDSStates):
         for itr in xrange(niter):
             self.resample_discrete_states()
             self.resample_gaussian_states()
-        self._init_mf_from_gibbs()
+
+    def _init_gibbs_from_mf(self):
+        raise NotImplementedError  # TODO
 
     def resample_discrete_states(self):
         super(_SLDSStatesGibbs, self).resample()
@@ -126,15 +129,10 @@ class _SLDSStatesGibbs(_SLDSStates):
             self.As, self.BBTs, self.Cs, self.DDTs,
             self.data)
 
-    def _init_mf_from_gibbs(self):
-        raise NotImplementedError
-
 
 class _SLDSStatesMeanField(_SLDSStates):
     @property
     def mf_aBl(self):
-        # TODO check that expected_log_likelihood calls in Gaussian and
-        # Regression work like this
         if self._mf_aBl is None:
             mf_aBl = self._mf_aBl = np.empty((self.T, self.num_states))
             ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
@@ -157,20 +155,41 @@ class _SLDSStatesMeanField(_SLDSStates):
             self.meanfield_update_discrete_states()
             self.meanfield_update_gaussian_states()
 
+    def _init_mf_from_gibbs(self):
+        # TODO move to HMMStates?
+        expected_states = np.eye(self.num_states)[self.stateseq]
+        expected_transcounts = count_transitions(self.stateseq, self.num_states)
+        self.all_expected_stats = \
+            expected_states, expected_transcounts, -np.inf
+
+        # smoothed_mus = self.gaussian_states
+        # smoothed_sigmas = np.eye(self.D_latent)[None,...]
+        # E_xtp1_xtT = smoothed_mus[1:,:,None] * smoothed_mus[:-1,None,:]
+        # self._set_gaussian_expected_stats(
+        #     self.gaussian_states, smoothed_sigmas, E_xtp1_xtT)
+        self.meanfield_update_gaussian_states()
+
     def meanfield_update_discrete_states(self):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
 
     def meanfield_update_gaussian_states(self):
-        # TODO this is similar to pylds.states.LDSStates, make static method?
+        # TODO this is similar to pylds.states.LDSStates but with a different
+        # get_params and a different h_node
+
         J_init = np.linalg.inv(self.sigma_init)
         h_init = np.linalg.solve(self.sigma_init, self.mu_init)
 
-        d, e = self.dynamics_distn, self.emission_distn
+        def get_paramseq(distns):
+            s = self.stateseq
+            a, b, c, d = map(np.array, zip(*[
+                mniw_expectedstats(*d._natural_to_standard(d.mf_natural_hypparam))
+                for d in distns]))
+            return a[s], b[s], c[s], d[s]
+
         J_pair_22, J_pair_21, J_pair_11, logdet_pair = \
-            mniw_expectedstats(*d._natural_to_standard(d.mf_natural_hypparam))
-        J_yy, J_yx, J_node, logdet_node = \
-            mniw_expectedstats(*e._natural_to_standard(e.mf_natural_hypparam))
-        h_node = self.data.dot(J_yx)
+            get_paramseq(self.dynamics_distns)
+        J_yy, J_yx, J_node, logdet_node = get_paramseq(self.emission_distns)
+        h_node = np.einsum('ni,nij->nj', self.data, J_yx)
 
         self._mf_lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, \
             E_xtp1_xtT = info_E_step(
