@@ -1,15 +1,19 @@
 from __future__ import division
 import numpy as np
 
+from pybasicbayes.util.stats import mniw_expectedstats
+
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
     GeoHSMMStates
 
 from autoregressive.util import AR_striding
-from pylds.lds_messages_interface import filter_and_sample
+from pylds.states import LDSStates
+from pylds.lds_messages_interface import filter_and_sample, info_E_step
 
 # TODO on instantiating, maybe gaussian states should be resampled
 # TODO use mean field to initialize hmm states and vice-versa
+# TODO make niter an __init__ arg instead of a method arg
 
 
 ###########
@@ -110,6 +114,7 @@ class _SLDSStatesGibbs(_SLDSStates):
         for itr in xrange(niter):
             self.resample_discrete_states()
             self.resample_gaussian_states()
+        self._init_mf_from_gibbs()
 
     def resample_discrete_states(self):
         super(_SLDSStatesGibbs, self).resample()
@@ -120,6 +125,9 @@ class _SLDSStatesGibbs(_SLDSStates):
             self.mu_init, self.sigma_init,
             self.As, self.BBTs, self.Cs, self.DDTs,
             self.data)
+
+    def _init_mf_from_gibbs(self):
+        raise NotImplementedError
 
 
 class _SLDSStatesMeanField(_SLDSStates):
@@ -144,7 +152,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         return self._mf_aBl
 
     def meanfieldupdate(self, niter=1):
-        # TODO make niter an __init__ arg instead of a method arg here
+        niter = self.niter if hasattr(self, 'niter') else niter
         for itr in xrange(niter):
             self.meanfield_update_discrete_states()
             self.meanfield_update_gaussian_states()
@@ -153,19 +161,36 @@ class _SLDSStatesMeanField(_SLDSStates):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
 
     def meanfield_update_gaussian_states(self):
-        # TODO like meanfieldupdate in pylds.states.LDSStates
-        raise NotImplementedError
+        # TODO this is similar to pylds.states.LDSStates, make static method?
+        J_init = np.linalg.inv(self.sigma_init)
+        h_init = np.linalg.solve(self.sigma_init, self.mu_init)
 
-    def vlb(self):
-        raise NotImplementedError  # TODO
+        d, e = self.dynamics_distn, self.emission_distn
+        J_pair_22, J_pair_21, J_pair_11, logdet_pair = \
+            mniw_expectedstats(*d._natural_to_standard(d.mf_natural_hypparam))
+        J_yy, J_yx, J_node, logdet_node = \
+            mniw_expectedstats(*e._natural_to_standard(e.mf_natural_hypparam))
+        h_node = self.data.dot(J_yx)
 
-    def _set_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
+        self._mf_lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, \
+            E_xtp1_xtT = info_E_step(
+                J_init,h_init,J_pair_11,-J_pair_21,J_pair_22,J_node,h_node)
+        self._mf_lds_normalizer += LDSStates._info_extra_loglike_terms(
+            J_init, h_init, logdet_pair, J_yy, logdet_node, self.data)
+
+        self._set_gaussian_expected_stats(
+            self.smoothed_mus,self.smoothed_sigmas,E_xtp1_xtT)
+
+    def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
         assert not np.isnan(E_xtp1_xtT).any()
         assert not np.isnan(smoothed_mus).any()
         assert not np.isnan(smoothed_sigmas).any()
 
+        # this is like LDSStates._set_expected_states but doesn't sum over time
+
         # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
-        EyyT = self.EyyT = self.data[:,:,None] * self.data[:,None,:]  # TODO compute once
+        # TODO only compute EyyT once
+        EyyT = self.EyyT = self.data[:,:,None] * self.data[:,None,:]
         EyxT = self.EyxT = self.data[:,:,None] * self.smoothed_mus[:,None,:]
         ExxT = self.ExxT = smoothed_sigmas \
             + self.smoothed_mus[:,:,None] * self.smoothed_mus[:,None,:]
@@ -177,6 +202,17 @@ class _SLDSStatesMeanField(_SLDSStates):
         self.E_emission_stats = (EyyT, EyxT, ExxT, np.ones(T))
         self.E_dynamics_stats = \
             (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T-1))
+
+    def get_vlb(self, most_recently_updated=False):
+        if not most_recently_updated:
+            raise NotImplementedError  # TODO
+        else:
+            hmm_vlb = super(_SLDSStatesMeanField, self).get_vlb(
+                most_recently_updated=False)
+            lds_vlb = self._mf_lds_normalizer
+
+            return hmm_vlb + lds_vlb
+
 
 
 ####################

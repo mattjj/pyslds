@@ -87,8 +87,15 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
 
     ### vlb
 
-    def vlb(self, **kwargs):
-        raise NotImplementedError  # TODO
+    def vlb(self, states_last_updated=False):
+        vlb = 0.
+        vlb += sum(s.get_vlb(states_last_updated) for s in self.states_list)
+        vlb += self.trans_distn.get_vlb()
+        vlb += self.init_state_distn.get_vlb()
+        vlb += sum(d.get_vlb() for d in self.init_dynamics_distns)
+        vlb += sum(d.get_vlb() for d in self.dynamics_distns)
+        vlb += sum(d.get_vlb() for d in self.emission_distns)
+        return vlb
 
 
 class HMMSLDSPython(_SLDSGibbsMixin, pyhsmm.models.HMMPython):
