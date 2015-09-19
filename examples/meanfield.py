@@ -81,4 +81,6 @@ plt.plot([model.meanfield_coordinate_descent_step()
           for _ in progprint_xrange(50)])
 
 plt.matshow(model.states_list[0].expected_states.T)
+plt.axis('auto')
+
 plt.show()

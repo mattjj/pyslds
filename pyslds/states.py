@@ -1,5 +1,6 @@
 from __future__ import division
 import numpy as np
+from functools import partial
 
 from pybasicbayes.util.stats import mniw_expectedstats
 
@@ -161,18 +162,14 @@ class _SLDSStatesMeanField(_SLDSStates):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
 
     def meanfield_update_gaussian_states(self):
-        # TODO this is similar to pylds.states.LDSStates but with a different
-        # get_params and a different h_node
-
         J_init = np.linalg.inv(self.sigma_init)
         h_init = np.linalg.solve(self.sigma_init, self.mu_init)
 
         def get_paramseq(distns):
-            s = self.stateseq
-            a, b, c, d = map(np.array, zip(*[
-                mniw_expectedstats(*d._natural_to_standard(d.mf_natural_hypparam))
-                for d in distns]))
-            return a[s], b[s], c[s], d[s]
+            contract = partial(np.tensordot, self.expected_states, axes=1)
+            std_param = lambda d: d._natural_to_standard(d.mf_natural_hypparam)
+            params = [mniw_expectedstats(*std_param(d)) for d in distns]
+            return map(contract, zip(*params))
 
         J_pair_22, J_pair_21, J_pair_11, logdet_pair = \
             get_paramseq(self.dynamics_distns)
