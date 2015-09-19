@@ -3,7 +3,6 @@ import numpy as np
 
 from pybasicbayes.util.stats import mniw_expectedstats
 
-from pyhsmm.util.cstats import count_transitions
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
     GeoHSMMStates
@@ -13,7 +12,6 @@ from pylds.states import LDSStates
 from pylds.lds_messages_interface import filter_and_sample, info_E_step
 
 # TODO on instantiating, maybe gaussian states should be resampled
-# TODO use mean field to initialize hmm states and vice-versa
 # TODO make niter an __init__ arg instead of a method arg
 
 
@@ -156,17 +154,7 @@ class _SLDSStatesMeanField(_SLDSStates):
             self.meanfield_update_gaussian_states()
 
     def _init_mf_from_gibbs(self):
-        # TODO move to HMMStates?
-        expected_states = np.eye(self.num_states)[self.stateseq]
-        expected_transcounts = count_transitions(self.stateseq, self.num_states)
-        self.all_expected_stats = \
-            expected_states, expected_transcounts, -np.inf
-
-        # smoothed_mus = self.gaussian_states
-        # smoothed_sigmas = np.eye(self.D_latent)[None,...]
-        # E_xtp1_xtT = smoothed_mus[1:,:,None] * smoothed_mus[:-1,None,:]
-        # self._set_gaussian_expected_stats(
-        #     self.gaussian_states, smoothed_sigmas, E_xtp1_xtT)
+        super(_SLDSStatesMeanField, self)._init_mf_from_gibbs()
         self.meanfield_update_gaussian_states()
 
     def meanfield_update_discrete_states(self):
@@ -221,6 +209,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         self.E_emission_stats = (EyyT, EyxT, ExxT, np.ones(T))
         self.E_dynamics_stats = \
             (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T-1))
+        self.E_init_stats = (self.smoothed_mus[0], ExxT[0], 1.)
 
     def get_vlb(self, most_recently_updated=False):
         if not most_recently_updated:
@@ -233,26 +222,40 @@ class _SLDSStatesMeanField(_SLDSStates):
             return hmm_vlb + lds_vlb
 
 
-
 ####################
 #  states classes  #
 ####################
 
-class HMMSLDSStatesPython(_SLDSStatesGibbs, HMMStatesPython):
+class HMMSLDSStatesPython(
+        _SLDSStatesGibbs,
+        _SLDSStatesMeanField,
+        HMMStatesPython):
     pass
 
 
-class HMMSLDSStatesEigen(_SLDSStatesGibbs, HMMStatesEigen):
+class HMMSLDSStatesEigen(
+        _SLDSStatesGibbs,
+        _SLDSStatesMeanField,
+        HMMStatesEigen):
     pass
 
 
-class HSMMSLDSStatesPython(_SLDSStatesGibbs, HSMMStatesPython):
+class HSMMSLDSStatesPython(
+        _SLDSStatesGibbs,
+        _SLDSStatesMeanField,
+        HSMMStatesPython):
     pass
 
 
-class HSMMSLDSStatesEigen(_SLDSStatesGibbs, HSMMStatesEigen):
+class HSMMSLDSStatesEigen(
+        _SLDSStatesGibbs,
+        _SLDSStatesMeanField,
+        HSMMStatesEigen):
     pass
 
 
-class GeoHSMMSLDSStates(_SLDSStatesGibbs, GeoHSMMStates):
+class GeoHSMMSLDSStates(
+        _SLDSStatesGibbs,
+        _SLDSStatesMeanField,
+        GeoHSMMStates):
     pass
