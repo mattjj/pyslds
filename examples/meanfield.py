@@ -24,7 +24,7 @@ As = [np.array([[np.cos(theta), -np.sin(theta)],
 truemodel = autoregressive.models.ARHSMM(
     alpha=4.,init_state_concentration=4.,
     obs_distns=[AutoRegression(A=A,sigma=0.05*np.eye(2)) for A in As],
-    dur_distns=[PoissonDuration(alpha_0=5*50,beta_0=5) for _ in As])
+    dur_distns=[PoissonDuration(alpha_0=3*50,beta_0=3) for _ in As])
 
 truemodel.prefix = np.array([[0.,3.]])
 data, labels = truemodel.generate(1000)
@@ -77,8 +77,7 @@ model.states_list[0]._init_mf_from_gibbs()
 ####################
 
 # plt.figure()
-# vlbs = [model.meanfield_coordinate_descent_step() for _ in progprint_xrange(50)]
-# plt.plot(vlbs)
+# plt.plot([model.meanfield_coordinate_descent_step() for _ in progprint_xrange(50)])
 
 for _ in progprint_xrange(50):
     model.meanfield_coordinate_descent_step(compute_vlb=False)
