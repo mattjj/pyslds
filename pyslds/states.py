@@ -212,11 +212,10 @@ class _SLDSStatesMeanField(_SLDSStates):
         if not most_recently_updated:
             raise NotImplementedError  # TODO
         else:
+            # TODO hmm_vlb term is jumpy
             hmm_vlb = super(_SLDSStatesMeanField, self).get_vlb(
                 most_recently_updated=False)
-            lds_vlb = self._mf_lds_normalizer
-
-            return hmm_vlb + lds_vlb
+            return hmm_vlb + self._mf_lds_normalizer
 
 
 ####################

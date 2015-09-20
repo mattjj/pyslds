@@ -38,9 +38,9 @@ plt.plot(data[:,0],data[:,1],'bx-')
 #  build model  #
 #################
 
-Nmax = 10          # number of latnt discrete states
-P = 2              # latent linear dynamics' dimension
-D = data.shape[1]  # data dimension
+Nmax = 10
+P = 2
+D = data.shape[1]
 
 dynamics_distns = [
     AutoRegression(
@@ -56,7 +56,7 @@ emission_distns = [
 
 
 init_dynamics_distns = [
-    Gaussian(nu_0=4,sigma_0=4.*np.eye(P),mu_0=np.zeros(P),kappa_0=0.01)
+    Gaussian(nu_0=4,sigma_0=4.*np.eye(P),mu_0=np.zeros(P),kappa_0=0.1)
     for _ in xrange(Nmax)]
 
 model = HMMSLDS(
@@ -67,7 +67,7 @@ model = HMMSLDS(
 
 model.add_data(data)
 model.resample_states()
-for _ in progprint_xrange(10):
+for _ in progprint_xrange(5):
     model.resample_model()
 model.states_list[0]._init_mf_from_gibbs()
 
@@ -80,7 +80,7 @@ plt.figure()
 plt.plot([model.meanfield_coordinate_descent_step()
           for _ in progprint_xrange(50)])
 
-plt.matshow(model.states_list[0].expected_states.T)
-plt.axis('auto')
+plt.figure()
+plt.imshow(model.states_list[0].expected_states.T)
 
 plt.show()
