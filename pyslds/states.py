@@ -208,6 +208,8 @@ class _SLDSStatesMeanField(_SLDSStates):
             (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T-1))
         self.E_init_stats = (self.smoothed_mus[0], ExxT[0], 1.)
 
+        self._mf_aBl = None  # TODO
+
     def get_vlb(self, most_recently_updated=False):
         if not most_recently_updated:
             raise NotImplementedError  # TODO
