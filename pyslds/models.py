@@ -64,6 +64,7 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
         self.meanfield_update_emission_distns()
         super(_SLDSMeanFieldMixin, self).meanfield_update_parameters()
 
+
     def meanfield_update_init_dynamics_distns(self):
         sum_tuples = lambda lst: map(sum, zip(*lst))
         E_stats = lambda i, s: \
@@ -72,6 +73,7 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
         for state, d in enumerate(self.init_dynamics_distns):
             d.meanfieldupdate(
                 stats=sum_tuples(E_stats(state, s) for s in self.states_list))
+
 
     def meanfield_update_dynamics_distns(self):
         contract = partial(np.tensordot, axes=1)

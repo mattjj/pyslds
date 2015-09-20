@@ -67,7 +67,7 @@ model = HMMSLDS(
 
 model.add_data(data)
 model.resample_states()
-for _ in progprint_xrange(5):
+for _ in progprint_xrange(10):
     model.resample_model()
 model.states_list[0]._init_mf_from_gibbs()
 
@@ -76,11 +76,31 @@ model.states_list[0]._init_mf_from_gibbs()
 #  run mean field  #
 ####################
 
-plt.figure()
-plt.plot([model.meanfield_coordinate_descent_step()
-          for _ in progprint_xrange(50)])
+# plt.figure()
+# vlbs = [model.meanfield_coordinate_descent_step() for _ in progprint_xrange(50)]
+# plt.plot(vlbs)
 
-plt.figure()
-plt.imshow(model.states_list[0].expected_states.T)
+for _ in progprint_xrange(50):
+    model.meanfield_coordinate_descent_step(compute_vlb=False)
+
+import matplotlib.gridspec as gridspec
+fig = plt.figure(figsize=(9,3))
+gs = gridspec.GridSpec(7,1)
+ax1 = fig.add_subplot(gs[:-2])
+ax2 = fig.add_subplot(gs[-2], sharex=ax1)
+ax3 = fig.add_subplot(gs[-1], sharex=ax1)
+
+im = ax1.matshow(model.states_list[0].expected_states.T, aspect='auto')
+ax1.set_xticks([])
+ax1.set_yticks([])
+
+ax2.matshow(model.states_list[0].expected_states.argmax(1)[None,:], aspect='auto')
+ax2.set_xticks([])
+ax2.set_yticks([])
+
+ax3.matshow(labels[None,:], aspect='auto')
+ax3.set_xticks([])
+ax3.set_yticks([])
+
 
 plt.show()
