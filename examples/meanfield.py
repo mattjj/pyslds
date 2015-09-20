@@ -6,7 +6,7 @@ from pyhsmm.basic.distributions import Regression, Gaussian, PoissonDuration
 from autoregressive.distributions import AutoRegression
 from pyhsmm.util.text import progprint_xrange
 
-from pyslds.models import WeakLimitStickyHDPHMMSLDS
+from pyslds.models import HMMSLDS
 
 np.random.seed(0)
 
@@ -38,14 +38,14 @@ plt.plot(data[:,0],data[:,1],'bx-')
 #  build model  #
 #################
 
-Nmax = 10          # number of latnt discrete states
-P = 2              # latent linear dynamics' dimension
-D = data.shape[1]  # data dimension
+Nmax = 10
+P = 2
+D = data.shape[1]
 
 dynamics_distns = [
     AutoRegression(
         A=np.eye(P),sigma=np.eye(P),
-        nu_0=2,S_0=2.*np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
+        nu_0=3,S_0=3.*np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
     for _ in xrange(Nmax)]
 
 emission_distns = [
@@ -56,58 +56,31 @@ emission_distns = [
 
 
 init_dynamics_distns = [
-    Gaussian(nu_0=3,sigma_0=3.*np.eye(P),mu_0=np.zeros(P),kappa_0=0.01)
+    Gaussian(nu_0=4,sigma_0=4.*np.eye(P),mu_0=np.zeros(P),kappa_0=0.1)
     for _ in xrange(Nmax)]
 
-model = WeakLimitStickyHDPHMMSLDS(
+model = HMMSLDS(
     dynamics_distns=dynamics_distns,
     emission_distns=emission_distns,
     init_dynamics_distns=init_dynamics_distns,
-    kappa=100.,alpha=3.,gamma=3.,init_state_distn='uniform')
+    alpha=3.,init_state_distn='uniform')
 
 model.add_data(data)
 model.resample_states()
-
-
-##################
-#  run sampling  #
-##################
-
-from matplotlib.transforms import Bbox
-import matplotlib.gridspec as gridspec
-
-n_show = 50
-samples = np.empty((n_show, data.shape[0]))
-samples[:n_show] = model.stateseqs[0]
-
-fig = plt.figure(figsize=(8,3))
-gs = gridspec.GridSpec(6,1)
-ax1 = fig.add_subplot(gs[:-1])
-ax2 = fig.add_subplot(gs[-1], sharex=ax1)
-
-im = ax1.matshow(samples[::-1], aspect='auto')
-ax1.autoscale(False)
-ax1.set_xticks([])
-ax1.set_yticks([])
-xo, yo, w, ht = ax1.bbox.bounds
-h = ht / n_show
-
-ax2.matshow(labels[None,:], aspect='auto')
-ax2.set_xticks([])
-ax2.set_yticks([])
-
-
-plt.draw()
-plt.ion()
-plt.show()
-
-
-from itertools import count
-for itr in count():
+for _ in progprint_xrange(5):
     model.resample_model()
+model.states_list[0]._init_mf_from_gibbs()
 
-    samples[itr % n_show] = model.stateseqs[0]
-    im.set_array(samples[::-1])
-    ax1.draw_artist(im)
-    fig.canvas.blit(ax1.bbox)
-    fig.canvas.blit(Bbox.from_bounds(xo,yo+h*(itr % n_show)+h,w,h))
+
+####################
+#  run mean field  #
+####################
+
+plt.figure()
+plt.plot([model.meanfield_coordinate_descent_step()
+          for _ in progprint_xrange(50)])
+
+plt.figure()
+plt.imshow(model.states_list[0].expected_states.T)
+
+plt.show()

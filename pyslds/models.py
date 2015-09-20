@@ -1,4 +1,7 @@
 from __future__ import division
+import numpy as np
+from functools import partial
+from builtins import zip
 
 import pyhsmm
 
@@ -11,14 +14,21 @@ class _SLDSMixin(object):
         self.init_dynamics_distns = init_dynamics_distns
         self.dynamics_distns = dynamics_distns
         self.emission_distns = emission_distns
-        super(_SLDSMixin,self).__init__(obs_distns=self.dynamics_distns,**kwargs)
+        super(_SLDSMixin,self).__init__(
+            obs_distns=self.dynamics_distns,**kwargs)
 
 
 class _SLDSGibbsMixin(_SLDSMixin):
     def resample_parameters(self):
+        self.resample_lds_parameters()
+        self.resample_hmm_parameters()
+
+    def resample_lds_parameters(self):
         self.resample_init_dynamics_distns()
         self.resample_dynamics_distns()
         self.resample_emission_distns()
+
+    def resample_hmm_parameters(self):
         super(_SLDSGibbsMixin,self).resample_parameters()
 
     def resample_init_dynamics_distns(self):
@@ -44,14 +54,66 @@ class _SLDSGibbsMixin(_SLDSMixin):
         self._clear_caches()
 
     def resample_obs_distns(self):
-        pass
+        pass  # handled in resample_parameters
+
+
+class _SLDSMeanFieldMixin(_SLDSMixin):
+    def meanfield_update_parameters(self):
+        self.meanfield_update_init_dynamics_distns()
+        self.meanfield_update_dynamics_distns()
+        self.meanfield_update_emission_distns()
+        super(_SLDSMeanFieldMixin, self).meanfield_update_parameters()
+
+    def meanfield_update_init_dynamics_distns(self):
+        sum_tuples = lambda lst: map(sum, zip(*lst))
+        E_stats = lambda i, s: \
+            tuple(s.expected_states[0,i] * stat for stat in s.E_init_stats)
+
+        for state, d in enumerate(self.init_dynamics_distns):
+            d.meanfieldupdate(
+                stats=sum_tuples(E_stats(state, s) for s in self.states_list))
+
+    def meanfield_update_dynamics_distns(self):
+        contract = partial(np.tensordot, axes=1)
+        sum_tuples = lambda lst: map(sum, zip(*lst))
+        E_stats = lambda i, s: \
+            tuple(contract(s.expected_states[1:,i], stat) for stat in s.E_dynamics_stats)
+
+        for state, d in enumerate(self.dynamics_distns):
+            d.meanfieldupdate(
+                stats=sum_tuples(E_stats(state, s) for s in self.states_list))
+
+    def meanfield_update_emission_distns(self):
+        contract = partial(np.tensordot, axes=1)
+        sum_tuples = lambda lst: map(sum, zip(*lst))
+        E_stats = lambda i, s: \
+            tuple(contract(s.expected_states[:,i], stat) for stat in s.E_emission_stats)
+
+        for state, d in enumerate(self.emission_distns):
+            d.meanfieldupdate(
+                stats=sum_tuples(E_stats(state, s) for s in self.states_list))
+
+    def meanfield_update_obs_distns(self):
+        pass  # handled in meanfield_update_parameters
+
+    ### vlb
+
+    def vlb(self, states_last_updated=False):
+        vlb = 0.
+        vlb += sum(s.get_vlb(states_last_updated) for s in self.states_list)
+        vlb += self.trans_distn.get_vlb()
+        vlb += self.init_state_distn.get_vlb()
+        vlb += sum(d.get_vlb() for d in self.init_dynamics_distns)
+        vlb += sum(d.get_vlb() for d in self.dynamics_distns)
+        vlb += sum(d.get_vlb() for d in self.emission_distns)
+        return vlb
 
 
 class HMMSLDSPython(_SLDSGibbsMixin, pyhsmm.models.HMMPython):
     _states_class = HMMSLDSStatesPython
 
 
-class HMMSLDS(_SLDSGibbsMixin, pyhsmm.models.HMM):
+class HMMSLDS(_SLDSGibbsMixin, _SLDSMeanFieldMixin, pyhsmm.models.HMM):
     _states_class = HMMSLDSStatesEigen
 
 
@@ -69,6 +131,7 @@ class WeakLimitHDPHMMSLDS(_SLDSGibbsMixin, pyhsmm.models.WeakLimitHDPHMM):
 
 class WeakLimitStickyHDPHMMSLDS(
         _SLDSGibbsMixin,
+        _SLDSMeanFieldMixin,
         pyhsmm.models.WeakLimitStickyHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
