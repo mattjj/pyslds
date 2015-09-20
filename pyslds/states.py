@@ -123,7 +123,7 @@ class _SLDSStatesGibbs(_SLDSStates):
 
     def resample_gaussian_states(self):
         self._aBl = None  # clear any caching
-        self._normalizer, self.gaussian_states = filter_and_sample(
+        self._gaussian_normalizer, self.gaussian_states = filter_and_sample(
             self.mu_init, self.sigma_init,
             self.As, self.BBTs, self.Cs, self.DDTs,
             self.data)
