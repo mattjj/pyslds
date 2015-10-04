@@ -4,7 +4,7 @@ from functools import partial
 
 from pybasicbayes.util.stats import mniw_expectedstats
 
-from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
+from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen, _StatesBase
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
     GeoHSMMStates
 
@@ -28,11 +28,34 @@ class _SLDSStates(object):
         self.generate_gaussian_states()
 
     def generate_gaussian_states(self):
-        # TODO this is dumb, but generating from the prior will be unstable
-        self.gaussian_states = np.random.normal(size=(self.T,self.D_latent))
+        # Generate from the prior and raise exception if unstable
+        T, n = self.T, self.D_latent
+
+        # The discrete stateseq should be populated by the super call above
+        dss = self.stateseq
+
+        gss = np.empty((T,n),dtype='double')
+        gss[0] = self.init_dynamics_distns[dss[0]].rvs()
+
+        for t in xrange(1,T):
+            gss[t] = self.dynamics_distns[dss[t]].\
+                rvs(lagged_data=gss[t-1][None,:])
+            assert np.all(np.isfinite(gss[t])), "SLDS appears to be unstable!"
+
+        self.gaussian_states = gss
 
     def generate_obs(self):
-        raise NotImplementedError
+        # Go through each time bin, get the discrete latent state,
+        # use that to index into the emission_distns to get samples
+        T, p = self.T, self.D_emission
+        dss, gss = self.stateseq, self.gaussian_states
+        data = np.empty((T,p),dtype='double')
+
+        for t in xrange(self.T):
+            data[t] = self.emission_distns[dss[t]].\
+                rvs(x=gss[t][None,:], return_xy=False)
+            
+        return data
 
     ## convenience properties
 
@@ -46,7 +69,7 @@ class _SLDSStates(object):
 
     @property
     def D_emission(self):
-        return self.emission_distns[0].D
+        return self.emission_distns[0].D_out
 
     @property
     def dynamics_distns(self):

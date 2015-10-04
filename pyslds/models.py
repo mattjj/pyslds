@@ -17,6 +17,15 @@ class _SLDSMixin(object):
         super(_SLDSMixin,self).__init__(
             obs_distns=self.dynamics_distns,**kwargs)
 
+    def _generate_obs(self,s):
+        if s.data is None:
+            s.data = s.generate_obs()
+        else:
+            # TODO: Handle missing data
+            raise NotImplementedError
+
+        return s.data
+
 
 class _SLDSGibbsMixin(_SLDSMixin):
     def resample_parameters(self):
