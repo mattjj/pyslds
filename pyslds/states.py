@@ -23,6 +23,35 @@ from pylds.lds_messages_interface import filter_and_sample, info_E_step
 class _SLDSStates(object):
     ### generation
 
+    def __init__(self,model,T=None,data=None,stateseq=None,gaussian_states=None,
+            generate=True,initialize_from_prior=True):
+        self.model = model
+
+        self.T = T if T is not None else data.shape[0]
+        self.data = data
+
+        self.clear_caches()
+
+        # store gaussian states and state sequence if passed in
+        if gaussian_states is not None and stateseq is not None:
+            self.gaussian_states = gaussian_states
+            self.stateseq = np.array(stateseq,dtype=np.int32)
+            if data is not None and not initialize_from_prior:
+                self.resample()
+
+        elif stateseq is not None:
+            self.stateseq = np.array(stateseq,dtype=np.int32)
+        elif generate:
+            if data is not None and not initialize_from_prior:
+                self.resample()
+            else:
+                self.generate_states()
+
+        # parallel stuff
+        self._kwargs = dict(self._kwargs,
+                            stateseq=self.stateseq,
+                            gaussian_states=self.gaussian_states)
+
     def generate_states(self):
         super(_SLDSStates,self).generate_states()
         self.generate_gaussian_states()
