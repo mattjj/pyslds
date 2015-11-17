@@ -47,10 +47,11 @@ class _SLDSStates(object):
             else:
                 self.generate_states()
 
-        # parallel stuff
-        self._kwargs = dict(self._kwargs,
-                            stateseq=self.stateseq,
-                            gaussian_states=self.gaussian_states)
+    @property
+    def _kwargs(self):
+        return dict(super(_SLDSStates, self)._kwargs,
+                    stateseq=self.stateseq,
+                    gaussian_states=self.gaussian_states)
 
     def generate_states(self):
         super(_SLDSStates,self).generate_states()
@@ -175,7 +176,7 @@ class _SLDSStatesGibbs(_SLDSStates):
 
     def resample_gaussian_states(self):
         self._aBl = None  # clear any caching
-        self._gaussian_normalizer, self.gaussian_states[...] = \
+        self._gaussian_normalizer, self.gaussian_states = \
             filter_and_sample(
                 self.mu_init, self.sigma_init,
                 self.As, self.BBTs, self.Cs, self.DDTs,
