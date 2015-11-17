@@ -4,9 +4,13 @@ from functools import partial
 from builtins import zip
 
 import pyhsmm
+from pyhsmm.util.general import list_split
 
 from states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, \
     HSMMSLDSStatesEigen
+
+from pyhsmm.util.profiling import line_profiled
+from pybasicbayes.util.stats import atleast_2d
 
 
 class _SLDSMixin(object):
@@ -64,6 +68,31 @@ class _SLDSGibbsMixin(_SLDSMixin):
 
     def resample_obs_distns(self):
         pass  # handled in resample_parameters
+
+    ### joblib parallel
+
+    def _joblib_resample_states(self,states_list,num_procs):
+        from joblib import Parallel, delayed
+        import parallel
+
+        if len(states_list) > 0:
+            joblib_args = map(self._get_joblib_pair, states_list)
+
+            parallel.model = self
+            parallel.args = list_split(joblib_args, num_procs)
+
+            idxs = range(len(parallel.args))
+            raw_stateseqs = Parallel(n_jobs=num_procs,backend='multiprocessing')\
+                    (map(delayed(parallel._get_sampled_stateseq), idxs))
+
+            flatten = lambda lst: [x for y in lst for x in y]
+            raw_stateseqs = flatten(raw_stateseqs)
+
+            # since list_split might reorder things, do the same to states_list
+            states_list = flatten(list_split(states_list, num_procs))
+
+            for s, tup in zip(states_list, raw_stateseqs):
+                s.stateseq, s.gaussian_states, s._normalizer = tup
 
 
 class _SLDSMeanFieldMixin(_SLDSMixin):
