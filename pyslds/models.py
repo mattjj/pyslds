@@ -69,7 +69,7 @@ class _SLDSGibbsMixin(_SLDSMixin):
     def resample_obs_distns(self):
         pass  # handled in resample_parameters
 
-    ### joblib parallel stuff here
+    ### joblib parallel
 
     def _joblib_resample_states(self,states_list,num_procs):
         from joblib import Parallel, delayed

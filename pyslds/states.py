@@ -21,8 +21,6 @@ from pylds.lds_messages_interface import filter_and_sample, info_E_step
 ###########
 
 class _SLDSStates(object):
-    ### generation
-
     def __init__(self,model,T=None,data=None,stateseq=None,gaussian_states=None,
             generate=True,initialize_from_prior=True):
         self.model = model
@@ -46,12 +44,6 @@ class _SLDSStates(object):
                 self.resample()
             else:
                 self.generate_states()
-
-    @property
-    def _kwargs(self):
-        return dict(super(_SLDSStates, self)._kwargs,
-                    stateseq=self.stateseq,
-                    gaussian_states=self.gaussian_states)
 
     def generate_states(self):
         super(_SLDSStates,self).generate_states()
@@ -141,6 +133,11 @@ class _SLDSStates(object):
         Dset = np.concatenate([d.sigma[None,...] for d in self.emission_distns])
         return Dset[self.stateseq]
 
+    @property
+    def _kwargs(self):
+        return dict(super(_SLDSStates, self)._kwargs,
+                    stateseq=self.stateseq,
+                    gaussian_states=self.gaussian_states)
 
 ######################
 #  algorithm mixins  #
