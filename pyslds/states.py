@@ -83,7 +83,7 @@ class _SLDSStates(object):
         for t in xrange(self.T):
             data[t] = self.emission_distns[dss[t]].\
                 rvs(x=gss[t][None,:], return_xy=False)
-            
+
         return data
 
     ## convenience properties
@@ -175,10 +175,11 @@ class _SLDSStatesGibbs(_SLDSStates):
 
     def resample_gaussian_states(self):
         self._aBl = None  # clear any caching
-        self._gaussian_normalizer, self.gaussian_states = filter_and_sample(
-            self.mu_init, self.sigma_init,
-            self.As, self.BBTs, self.Cs, self.DDTs,
-            self.data)
+        self._gaussian_normalizer, self.gaussian_states[...] = \
+            filter_and_sample(
+                self.mu_init, self.sigma_init,
+                self.As, self.BBTs, self.Cs, self.DDTs,
+                self.data)
 
 
 class _SLDSStatesMeanField(_SLDSStates):

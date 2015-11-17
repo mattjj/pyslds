@@ -4,11 +4,11 @@ from functools import partial
 from builtins import zip
 
 import pyhsmm
+from pyhsmm.util.general import list_split
 
 from states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, \
     HSMMSLDSStatesEigen
 
-from pyhsmm.util.general import list_split
 from pyhsmm.util.profiling import line_profiled
 from pybasicbayes.util.stats import atleast_2d
 
@@ -21,14 +21,6 @@ class _SLDSMixin(object):
         super(_SLDSMixin,self).__init__(
             obs_distns=self.dynamics_distns,**kwargs)
 
-    def add_data(self,data,stateseq=None,gaussian_states=None,**kwargs):
-        self.states_list.append(
-               self._states_class(
-                   model=self,data=data,
-                   stateseq=stateseq,
-                   gaussian_states=gaussian_states,
-                   **kwargs))
-
     def _generate_obs(self,s):
         if s.data is None:
             s.data = s.generate_obs()
@@ -37,33 +29,6 @@ class _SLDSMixin(object):
             raise NotImplementedError
 
         return s.data
-
-
-
-    ### joblib parallel stuff here
-
-    def _joblib_resample_states(self,states_list,num_procs):
-        from joblib import Parallel, delayed
-        import parallel
-
-        # warn('joblib is segfaulting on OS X only, not sure why')
-
-        if len(states_list) > 0:
-            joblib_args = list_split(
-                    [self._get_joblib_pair(s) for s in states_list],
-                    num_procs)
-
-            parallel.model = self
-            parallel.args = joblib_args
-
-            raw_stateseqs = Parallel(n_jobs=num_procs,backend='multiprocessing')\
-                    (delayed(parallel._get_sampled_stateseq)(idx)
-                            for idx in range(len(joblib_args)))
-
-            for s, (stateseq, gaussian_states, log_likelihood) in zip(
-                    [s for grp in list_split(states_list,num_procs) for s in grp],
-                    [seq for grp in raw_stateseqs for seq in grp]):
-                s.stateseq, s.gaussian_states, s._normalizer = stateseq, gaussian_states, log_likelihood
 
 
 class _SLDSGibbsMixin(_SLDSMixin):
@@ -103,6 +68,31 @@ class _SLDSGibbsMixin(_SLDSMixin):
 
     def resample_obs_distns(self):
         pass  # handled in resample_parameters
+
+    ### joblib parallel stuff here
+
+    def _joblib_resample_states(self,states_list,num_procs):
+        from joblib import Parallel, delayed
+        import parallel
+
+        if len(states_list) > 0:
+            joblib_args = map(self._get_joblib_pair, states_list)
+
+            parallel.model = self
+            parallel.args = list_split(joblib_args, num_procs)
+
+            idxs = range(len(parallel.args))
+            raw_stateseqs = Parallel(n_jobs=num_procs,backend='multiprocessing')\
+                    (map(delayed(parallel._get_sampled_stateseq), idxs))
+
+            flatten = lambda lst: [x for y in lst for x in y]
+            raw_stateseqs = flatten(raw_stateseqs)
+
+            # since list_split might reorder things, do the same to states_list
+            states_list = flatten(list_split(states_list, num_procs))
+
+            for s, tup in zip(states_list, raw_stateseqs):
+                s.stateseq, s.gaussian_states, s._normalizer = tup
 
 
 class _SLDSMeanFieldMixin(_SLDSMixin):

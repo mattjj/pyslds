@@ -85,5 +85,5 @@ samples[:n_show] = model.stateseqs[0]
 from itertools import count
 for itr in xrange(10):
     print "model ll: %2.2f"%model.log_likelihood()
-    model.resample_model(num_procs=0)
+    model.resample_model(num_procs=2)
 
