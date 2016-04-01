@@ -22,11 +22,12 @@ from pylds.lds_messages_interface import filter_and_sample, info_E_step
 
 class _SLDSStates(object):
     def __init__(self,model,T=None,data=None,stateseq=None,gaussian_states=None,
-            generate=True,initialize_from_prior=True):
+            generate=True,initialize_from_prior=True,fixed_stateseq=None):
         self.model = model
 
         self.T = T if T is not None else data.shape[0]
         self.data = data
+        self.fixed_stateseq = fixed_stateseq
 
         self.clear_caches()
 
