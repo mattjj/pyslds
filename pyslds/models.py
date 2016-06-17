@@ -9,15 +9,25 @@ from pyhsmm.util.general import list_split
 from states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, \
     HSMMSLDSStatesEigen
 
-from pyhsmm.util.profiling import line_profiled
-from pybasicbayes.util.stats import atleast_2d
 
+from pybasicbayes.abstractions import Distribution
 
 class _SLDSMixin(object):
     def __init__(self,dynamics_distns,emission_distns,init_dynamics_distns,**kwargs):
         self.init_dynamics_distns = init_dynamics_distns
         self.dynamics_distns = dynamics_distns
-        self.emission_distns = emission_distns
+
+        # Allow for a single, shared emission distribution
+        if isinstance(emission_distns, Distribution):
+            self._single_emission = True
+            self._emission_distn = emission_distns
+            self.emission_distns = [emission_distns] * len(self.dynamics_distns)
+        else:
+            assert isinstance(emission_distns, list) and \
+                   len(emission_distns) == len(dynamics_distns)
+            self._single_emission = False
+            self.emission_distns = emission_distns
+
         super(_SLDSMixin,self).__init__(
             obs_distns=self.dynamics_distns,**kwargs)
 
@@ -59,11 +69,16 @@ class _SLDSGibbsMixin(_SLDSMixin):
         self._clear_caches()
 
     def resample_emission_distns(self):
-        for state, d in enumerate(self.emission_distns):
-            d.resample([
-                (s.gaussian_states[s.stateseq == state],
-                 s.data[s.stateseq == state])
-                for s in self.states_list])
+        if self._single_emission:
+            self._emission_distn.resample(
+                [(s.gaussian_states, s.data)
+                 for s in self.states_list])
+        else:
+            for state, d in enumerate(self.emission_distns):
+                d.resample([
+                    (s.gaussian_states[s.stateseq == state],
+                     s.data[s.stateseq == state])
+                    for s in self.states_list])
         self._clear_caches()
 
     def resample_obs_distns(self):
@@ -124,6 +139,7 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
                 stats=sum_tuples(E_stats(state, s) for s in self.states_list))
 
     def meanfield_update_emission_distns(self):
+        # TODO: Handle single emission matrix
         contract = partial(np.tensordot, axes=1)
         sum_tuples = lambda lst: map(sum, zip(*lst))
         E_stats = lambda i, s: \

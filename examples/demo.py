@@ -1,5 +1,8 @@
 from __future__ import division
 import numpy as np
+import matplotlib
+matplotlib.use("macosx")
+
 import matplotlib.pyplot as plt
 
 from pyhsmm.basic.distributions import Regression, Gaussian, PoissonDuration
@@ -96,7 +99,6 @@ ax2.matshow(labels[None,:], aspect='auto')
 ax2.set_xticks([])
 ax2.set_yticks([])
 
-
 plt.draw()
 plt.ion()
 plt.show()
@@ -108,6 +110,4 @@ for itr in count():
 
     samples[itr % n_show] = model.stateseqs[0]
     im.set_array(samples[::-1])
-    ax1.draw_artist(im)
-    fig.canvas.blit(ax1.bbox)
-    fig.canvas.blit(Bbox.from_bounds(xo,yo+h*(itr % n_show)+h,w,h))
+    plt.pause(0.001)

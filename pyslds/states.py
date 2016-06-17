@@ -2,6 +2,7 @@ from __future__ import division
 import numpy as np
 from functools import partial
 
+from pybasicbayes.distributions.regression import DiagonalRegression
 from pybasicbayes.util.stats import mniw_expectedstats
 
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen, _StatesBase
@@ -10,7 +11,8 @@ from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
 
 from autoregressive.util import AR_striding
 from pylds.states import LDSStates
-from pylds.lds_messages_interface import filter_and_sample, info_E_step
+from pylds.lds_messages_interface import filter_and_sample, info_E_step, E_step, \
+    filter_and_sample_diagonal
 
 # TODO on instantiating, maybe gaussian states should be resampled
 # TODO make niter an __init__ arg instead of a method arg
@@ -81,6 +83,9 @@ class _SLDSStates(object):
         return data
 
     ## convenience properties
+    @property
+    def has_diagonal_obs(self):
+        return all([isinstance(d, DiagonalRegression) for d in self.emission_distns])
 
     @property
     def strided_gaussian_states(self):
@@ -135,6 +140,12 @@ class _SLDSStates(object):
         return Dset[self.stateseq]
 
     @property
+    def sigma_obs(self):
+        assert self.has_diagonal_obs
+        Dset = np.concatenate([d.sigmasq_flat[None,:] for d in self.emission_distns])
+        return Dset[self.stateseq]
+
+    @property
     def _kwargs(self):
         return dict(super(_SLDSStates, self)._kwargs,
                     stateseq=self.stateseq,
@@ -174,11 +185,27 @@ class _SLDSStatesGibbs(_SLDSStates):
 
     def resample_gaussian_states(self):
         self._aBl = None  # clear any caching
-        self._gaussian_normalizer, self.gaussian_states = \
-            filter_and_sample(
+
+        if self.has_diagonal_obs:
+            self._gaussian_normalizer, self.gaussian_states = \
+                filter_and_sample_diagonal(
+                    self.mu_init, self.sigma_init,
+                    self.As, self.BBTs, self.Cs, self.sigma_obs,
+                    self.data)
+        else:
+            self._gaussian_normalizer, self.gaussian_states = \
+                filter_and_sample(
+                    self.mu_init, self.sigma_init,
+                    self.As, self.BBTs, self.Cs, self.DDTs,
+                    self.data)
+
+    def compute_smoothed_states(self):
+        _, smoothed_mus, smoothed_sigmas, _ = \
+            E_step(
                 self.mu_init, self.sigma_init,
                 self.As, self.BBTs, self.Cs, self.DDTs,
                 self.data)
+        return smoothed_mus, smoothed_sigmas
 
 
 class _SLDSStatesMeanField(_SLDSStates):
