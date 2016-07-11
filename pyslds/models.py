@@ -139,15 +139,22 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
                 stats=sum_tuples(E_stats(state, s) for s in self.states_list))
 
     def meanfield_update_emission_distns(self):
-        # TODO: Handle single emission matrix
-        contract = partial(np.tensordot, axes=1)
         sum_tuples = lambda lst: map(sum, zip(*lst))
-        E_stats = lambda i, s: \
-            tuple(contract(s.expected_states[:,i], stat) for stat in s.E_emission_stats)
 
-        for state, d in enumerate(self.emission_distns):
-            d.meanfieldupdate(
-                stats=sum_tuples(E_stats(state, s) for s in self.states_list))
+        if self._single_emission:
+            E_stats = lambda s: \
+                tuple(np.sum(stat, axis=0) for stat in s.E_emission_stats)
+
+            self._emission_distn.meanfieldupdate(
+                stats=sum_tuples(E_stats(s) for s in self.states_list))
+        else:
+            contract = partial(np.tensordot, axes=1)
+            E_stats = lambda i, s: \
+                tuple(contract(s.expected_states[:, i], stat) for stat in s.E_emission_stats)
+
+            for state, d in enumerate(self.emission_distns):
+                d.meanfieldupdate(
+                    stats=sum_tuples(E_stats(state, s) for s in self.states_list))
 
     def meanfield_update_obs_distns(self):
         pass  # handled in meanfield_update_parameters
@@ -161,7 +168,10 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
         vlb += self.init_state_distn.get_vlb()
         vlb += sum(d.get_vlb() for d in self.init_dynamics_distns)
         vlb += sum(d.get_vlb() for d in self.dynamics_distns)
-        vlb += sum(d.get_vlb() for d in self.emission_distns)
+        if self._single_emission:
+            vlb += self._emission_distn.get_vlb()
+        else:
+            vlb += sum(d.get_vlb() for d in self.emission_distns)
         return vlb
 
 
