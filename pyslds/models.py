@@ -62,23 +62,31 @@ class _SLDSGibbsMixin(_SLDSMixin):
         self._clear_caches()
 
     def resample_dynamics_distns(self):
+        zs = [s.stateseq[:-1] for s in self.states_list]
+        xs = [np.hstack((s.gaussian_states[:-1], s.inputs[:-1]))
+              for s in self.states_list]
+        ys = [s.gaussian_states[1:] for s in self.states_list]
+
         for state, d in enumerate(self.dynamics_distns):
             d.resample(
-                [s.strided_gaussian_states[s.stateseq[:-1] == state]
-                 for s in self.states_list])
+                [(x[z == state], y[z == state])
+                 for x, y, z in zip(xs, ys, zs)])
         self._clear_caches()
 
     def resample_emission_distns(self):
+        xs = \
+            [np.hstack((s.gaussian_states, s.inputs))
+             for s in self.states_list]
+        ys = [s.data for s in self.states_list]
+
         if self._single_emission:
-            self._emission_distn.resample(
-                [(s.gaussian_states, s.data)
-                 for s in self.states_list])
+            self._emission_distn.resample(list(zip(xs, ys)))
         else:
             for state, d in enumerate(self.emission_distns):
                 d.resample([
-                    (s.gaussian_states[s.stateseq == state],
-                     s.data[s.stateseq == state])
-                    for s in self.states_list])
+                    (x[s.stateseq == state],
+                     y[s.stateseq == state])
+                    for x,y in zip(xs, ys)])
         self._clear_caches()
 
     def resample_obs_distns(self):
@@ -87,6 +95,7 @@ class _SLDSGibbsMixin(_SLDSMixin):
     ### joblib parallel
 
     def _joblib_resample_states(self,states_list,num_procs):
+        # TODO: Update to handle inputs
         from joblib import Parallel, delayed
         import parallel
 
