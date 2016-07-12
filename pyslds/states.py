@@ -10,7 +10,7 @@ from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
 
 from autoregressive.util import AR_striding
 from pylds.states import LDSStates
-from pylds.lds_messages_interface import filter_and_sample, info_E_step
+from pylds.lds_messages_interface import filter_and_sample, info_E_step, E_step
 
 # TODO on instantiating, maybe gaussian states should be resampled
 # TODO make niter an __init__ arg instead of a method arg
@@ -21,12 +21,13 @@ from pylds.lds_messages_interface import filter_and_sample, info_E_step
 ###########
 
 class _SLDSStates(object):
-    def __init__(self,model,T=None,data=None,stateseq=None,gaussian_states=None,
+    def __init__(self,model,T=None,data=None,inputs=None,stateseq=None,gaussian_states=None,
             generate=True,initialize_from_prior=True,fixed_stateseq=None):
         self.model = model
 
         self.T = T if T is not None else data.shape[0]
         self.data = data
+        self.inputs = np.zeros((self.T, 0)) if inputs is None else inputs
         self.fixed_stateseq = fixed_stateseq
 
         self.clear_caches()
@@ -51,6 +52,7 @@ class _SLDSStates(object):
         self.generate_gaussian_states()
 
     def generate_gaussian_states(self):
+        # TODO: Handle inputs
         # Generate from the prior and raise exception if unstable
         T, n = self.T, self.D_latent
 
@@ -62,12 +64,14 @@ class _SLDSStates(object):
 
         for t in xrange(1,T):
             gss[t] = self.dynamics_distns[dss[t]].\
-                rvs(lagged_data=gss[t-1][None,:])
+                rvs(x=np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])),
+                    return_xy=False)
             assert np.all(np.isfinite(gss[t])), "SLDS appears to be unstable!"
 
         self.gaussian_states = gss
 
     def generate_obs(self):
+        # TODO: Handle inputs
         # Go through each time bin, get the discrete latent state,
         # use that to index into the emission_distns to get samples
         T, p = self.T, self.D_emission
@@ -76,19 +80,20 @@ class _SLDSStates(object):
 
         for t in xrange(self.T):
             data[t] = self.emission_distns[dss[t]].\
-                rvs(x=gss[t][None,:], return_xy=False)
+                rvs(x=np.hstack((gss[t][None, :], self.inputs[t][None,:])),
+                    return_xy=False)
 
         return data
 
     ## convenience properties
 
     @property
-    def strided_gaussian_states(self):
-        return AR_striding(self.gaussian_states,1)
+    def D_latent(self):
+        return self.dynamics_distns[0].D_out
 
     @property
-    def D_latent(self):
-        return self.dynamics_distns[0].D
+    def D_input(self):
+        return self.dynamics_distns[0].D_out - self.dynamics_distns[0].D_in
 
     @property
     def D_emission(self):
@@ -116,23 +121,33 @@ class _SLDSStates(object):
 
     @property
     def As(self):
-        Aset = np.concatenate([d.A[None,...] for d in self.dynamics_distns])
+        Aset = np.concatenate([d.A[None,:,:self.D_latent] for d in self.dynamics_distns])
         return Aset[self.stateseq]
 
     @property
-    def BBTs(self):
-        Bset = np.concatenate([d.sigma[None,...] for d in self.dynamics_distns])
+    def Bs(self):
+        Bset = np.concatenate([d.A[None,:,self.D_latent:] for d in self.dynamics_distns])
         return Bset[self.stateseq]
 
     @property
+    def sigma_statess(self):
+        sset = np.concatenate([d.sigma[None,...] for d in self.dynamics_distns])
+        return sset[self.stateseq]
+
+    @property
     def Cs(self):
-        Cset = np.concatenate([d.A[None,...] for d in self.emission_distns])
+        Cset = np.concatenate([d.A[None,:,:self.D_latent] for d in self.emission_distns])
         return Cset[self.stateseq]
 
     @property
-    def DDTs(self):
-        Dset = np.concatenate([d.sigma[None,...] for d in self.emission_distns])
+    def Ds(self):
+        Dset = np.concatenate([d.A[None, :, self.D_latent:] for d in self.emission_distns])
         return Dset[self.stateseq]
+
+    @property
+    def sigma_obss(self):
+        sset = np.concatenate([d.sigma[None,...] for d in self.emission_distns])
+        return sset[self.stateseq]
 
     @property
     def _kwargs(self):
@@ -153,9 +168,16 @@ class _SLDSStatesGibbs(_SLDSStates):
                 self.emission_distns
 
             for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
+                # Initial state distribution
                 aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
-                aBl[:-1,idx] = d2.log_likelihood(self.strided_gaussian_states)
-                aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data))
+
+                # Dynamics
+                xs = np.hstack((self.gaussian_states[:-1], self.inputs[:-1]))
+                aBl[:-1,idx] = d2.log_likelihood((xs, self.gaussian_states[1:]))
+
+                # Emissions
+                xs = np.hstack((self.gaussian_states, self.inputs))
+                aBl[:,idx] += d3.log_likelihood((xs, self.data))
 
             aBl[np.isnan(aBl).any(1)] = 0.
         return self._aBl
@@ -177,8 +199,9 @@ class _SLDSStatesGibbs(_SLDSStates):
         self._gaussian_normalizer, self.gaussian_states = \
             filter_and_sample(
                 self.mu_init, self.sigma_init,
-                self.As, self.BBTs, self.Cs, self.DDTs,
-                self.data)
+                self.As, self.Bs, self.sigma_statess,
+                self.Cs, self.Ds, self.sigma_obss,
+                self.inputs, self.data)
 
 
 class _SLDSStatesMeanField(_SLDSStates):
@@ -189,6 +212,7 @@ class _SLDSStatesMeanField(_SLDSStates):
             ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
                 self.emission_distns
 
+            # TODO: Update
             for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
                 mf_aBl[0,idx] = d1.expected_log_likelihood(
                     stats=(self.smoothed_mus[0], self.ExxT[0], 1.))
@@ -214,6 +238,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
 
     def meanfield_update_gaussian_states(self):
+        # TODO: Handle inputs
         J_init = np.linalg.inv(self.sigma_init)
         h_init = np.linalg.solve(self.sigma_init, self.mu_init)
 
@@ -237,7 +262,21 @@ class _SLDSStatesMeanField(_SLDSStates):
         self._set_gaussian_expected_stats(
             self.smoothed_mus,self.smoothed_sigmas,E_xtp1_xtT)
 
+    def E_step(self):
+        # TODO: Update normalizer?
+        self._normalizer, self.smoothed_mus, self.smoothed_sigmas, \
+        E_xtp1_xtT = E_step(
+            self.mu_init, self.sigma_init,
+            self.As, self.Bs, self.sigma_statess,
+            self.Cs, self.Ds, self.sigma_obss,
+            self.inputs, self.data)
+
+        self._set_gaussian_expected_stats(
+            self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
+
     def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
+        # TODO: Handle inputs
+
         assert not np.isnan(E_xtp1_xtT).any()
         assert not np.isnan(smoothed_mus).any()
         assert not np.isnan(smoothed_sigmas).any()
