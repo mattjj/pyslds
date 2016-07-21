@@ -3,6 +3,8 @@ import numpy as np
 from functools import partial
 from builtins import zip
 
+from pybasicbayes.distributions.regression import DiagonalRegression
+
 import pyhsmm
 from pyhsmm.util.general import list_split
 
@@ -38,7 +40,11 @@ class _SLDSMixin(object):
             # TODO: Handle missing data
             raise NotImplementedError
 
-        return s.data
+        return s.data, s.gaussian_states
+
+    @property
+    def diagonal_noise(self):
+        return all([isinstance(ed, DiagonalRegression) for ed in self.emission_distns])
 
 
 class _SLDSGibbsMixin(_SLDSMixin):
@@ -75,10 +81,11 @@ class _SLDSGibbsMixin(_SLDSMixin):
                  for s in self.states_list])
         else:
             for state, d in enumerate(self.emission_distns):
-                d.resample([
-                    (s.gaussian_states[s.stateseq == state],
-                     s.data[s.stateseq == state])
-                    for s in self.states_list])
+                d.resample(
+                    data=[(s.gaussian_states[s.stateseq == state],
+                           s.data[s.stateseq == state])
+                          for s in self.states_list],
+                    mask=[s.mask for s in self.states_list])
         self._clear_caches()
 
     def resample_obs_distns(self):
