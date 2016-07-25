@@ -34,7 +34,7 @@ As = [random_rotation(D_latent, np.pi/24.),
      random_rotation(D_latent, np.pi/12.)]
 
 C = np.random.randn(D_obs, D_latent)
-sigma_obs = 0.1 * np.eye(D_obs)
+sigma_obs = 0.5 * np.ones(D_obs)
 
 
 ###################
@@ -42,7 +42,7 @@ sigma_obs = 0.1 * np.eye(D_obs)
 ###################
 init_dynamics_distns = [Gaussian(mu=mu_init, sigma=sigma_init) for _ in xrange(K)]
 dynamics_distns = [AutoRegression(A=A, sigma=0.01*np.eye(D_latent)) for A in As]
-emission_distns = DiagonalRegression(D_obs, D_latent, A=C, sigmasq=0.5*np.ones(D_obs))
+emission_distns = DiagonalRegression(D_obs, D_latent, A=C, sigmasq=sigma_obs)
 
 truemodel = HMMSLDS(
     dynamics_distns=dynamics_distns,
@@ -50,11 +50,8 @@ truemodel = HMMSLDS(
     init_dynamics_distns=init_dynamics_distns,
     alpha=3., init_state_distn='uniform')
 
-truemodel.mu_init = mu_init
-truemodel.sigma_init = sigma_init
-
 #### MANUALLY CREATE DATA
-T = 2000
+T = 1000
 stateseq = np.repeat(np.arange(T//100) % 2, 100).astype(np.int32)
 statesobj = truemodel._states_class(model=truemodel, T=stateseq.size, stateseq=stateseq)
 statesobj.generate_gaussian_states()
@@ -71,6 +68,7 @@ for i,offset in enumerate(range(0,T,chunksz)):
         mask[offset:min(offset+chunksz, T), j] = False
     # if j == D_obs:
     #     mask[offset:min(offset+chunksz, T), :] = False
+statesobj.mask = mask
 
 ###############
 #  make model #
@@ -83,41 +81,40 @@ model = HMMSLDS(
         ) for _ in xrange(K)],
     dynamics_distns=
         [AutoRegression(
-            A=np.eye(D_latent), sigma=np.eye(D_latent),
+            # A=np.eye(D_latent), sigma=np.eye(D_latent),
             nu_0=D_latent+3,
             S_0=D_latent*np.eye(D_latent),
             M_0=np.zeros((D_latent, D_latent)),
             K_0=D_latent*np.eye(D_latent),
-            # A=A, sigma=0.01*np.eye(D_latent)
+            A=A.copy(), sigma=0.01*np.eye(D_latent)
         ) for A in As],
     emission_distns=DiagonalRegression(D_obs, D_latent,
                                        alpha_0=2.0, beta_0=1.0,
-                                       # A=C, sigmasq=0.1*np.ones(D_obs),
+                                       A=C.copy(), sigmasq=0.5*np.ones(D_obs),
                                        ),
     alpha=3., init_state_distn='uniform')
-###############
 model.add_data(data=data, mask=mask)
-# model.trans_distn = copy.deepcopy(truemodel.trans_distn)
-# model.states_list[0].stateseq = stateseq.copy()
-# model.states_list[0].gaussian_states = gaussian_states.copy()
+model.states_list[0].gaussian_states = statesobj.gaussian_states.copy()
 
 ###############
 #  fit model  #
 ###############
-N_samples = 200
+N_samples = 1000
 def gibbs_update(model):
     model.resample_model()
-    return model.log_likelihood(), model.stateseqs[0]
+    smoothed_obs = model.states_list[0].smooth()
+    return model.log_likelihood(), model.stateseqs[0], smoothed_obs
 
-def em_update(model):
-    model.EM_step()
-    return model.log_likelihood()
+def partial_meanfield_update(model):
+    for s in model.states_list:
+        s.meanfield_update_gaussian_states()
+    model.meanfield_update_parameters()
 
 def meanfield_update(model):
-    model.meanfield_coordinate_descent_step()
-    # model.resample_from_mf()
+    vlb = model.meanfield_coordinate_descent_step()
     expected_states = model.states_list[0].expected_states
-    return model.log_likelihood(), np.argmax(expected_states, axis=1)
+    smoothed_obs = model.states_list[0].meanfield_smooth()
+    return model.log_likelihood(), vlb, expected_states[:,1], smoothed_obs
 
 def svi_update(model, stepsize, minibatchsize):
     # Sample a minibatch
@@ -132,13 +129,17 @@ def svi_update(model, stepsize, minibatchsize):
 
 
 # Gibbs
-# lls, z_smpls = zip(*[gibbs_update(model) for _ in progprint_xrange(N_samples)])
+# lls, z_smpls, smoothed_obss = zip(*[gibbs_update(model) for _ in progprint_xrange(N_samples)])
 
-## Mean field
-for _ in progprint_xrange(100):
+## Mean field (initialized with Gibbs)
+for _ in progprint_xrange(200):
     model.resample_model()
-model.states_list[0]._init_mf_from_gibbs()
-lls, z_smpls = zip(*[meanfield_update(model) for _ in progprint_xrange(N_samples)])
+model._init_mf_from_gibbs()
+
+for _ in progprint_xrange(10):
+    partial_meanfield_update(model)
+
+lls, vlbs, z_smpls, smoothed_obss = zip(*[meanfield_update(model) for _ in progprint_xrange(N_samples)])
 
 ## SVI
 # delay = 10.0
@@ -152,20 +153,22 @@ lls, z_smpls = zip(*[meanfield_update(model) for _ in progprint_xrange(N_samples
 ################
 # likelihoods  #
 ################
-plt.figure()
+plt.figure(figsize=(10,6))
+plt.subplot(121)
 plt.plot(lls,'-b')
 plt.plot([0,N_samples], truemodel.log_likelihood() * np.ones(2), '-k')
 plt.xlabel('iteration')
 plt.ylabel('log likelihood')
+plt.subplot(122)
+plt.plot(vlbs,'-b')
+plt.xlabel('iteration')
+plt.ylabel("vlb")
 plt.savefig("log_likelihood.png")
 
 
 ################
 #  smoothing   #
 ################
-smoothed_obs = model.states_list[0].smooth()
-sample_predictive_obs = model.states_list[0].gaussian_states.dot(model.emission_distns[0].A.T)
-
 plt.figure(figsize=(10,6))
 given_data = data.copy()
 given_data[~mask] = np.nan
@@ -180,8 +183,7 @@ for i in range(N_subplots):
 
     plt.plot(given_data[:,i], 'k', label="observed")
     plt.plot(masked_data[:,i], ':k', label="masked")
-    plt.plot(smoothed_obs[:,i], 'b', lw=2, label="smoothed")
-    # plt.plot(sample_predictive_obs[:,i], ':b', label="sample")
+    plt.plot(smoothed_obss[-1][:,i], 'b', lw=2, label="smoothed")
 
     plt.imshow(1-mask[:,i][None,:],cmap="Greys",alpha=0.25,extent=(0,T) + ylims, aspect="auto")
 
@@ -200,19 +202,24 @@ plt.savefig("slds_missing_data_ex.png")
 #  z samples   #
 ################
 import matplotlib.gridspec as gridspec
-fig = plt.figure(figsize=(8,3))
+fig = plt.figure(figsize=(8,4))
 gs = gridspec.GridSpec(6,1)
 ax1 = fig.add_subplot(gs[:-1])
-ax2 = fig.add_subplot(gs[-1], sharex=ax1)
+ax2 = fig.add_subplot(gs[-1])
 
-im = ax1.matshow(np.array(z_smpls), aspect='auto')
+im = ax1.imshow(np.array(z_smpls), aspect='auto', interpolation="none")
 ax1.autoscale(False)
+ax1.set_ylabel("Iteration")
 ax1.set_xticks([])
-ax1.set_yticks([])
+# ax1.set_yticks([])
 
-ax2.matshow(truemodel.stateseqs[0][None,:], aspect='auto')
-ax2.set_xticks([])
+ax2.imshow(truemodel.stateseqs[0][None,:], aspect='auto')
+ax2.set_ylabel("True", labelpad=27)
+ax2.set_xlabel("Time")
+# ax2.set_xticks([])
 ax2.set_yticks([])
+
+fig.suptitle("Discrete state samples")
 plt.savefig("slds_discrete_states.png")
 
 plt.show()
