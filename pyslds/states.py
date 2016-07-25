@@ -253,21 +253,6 @@ class _SLDSStates(object):
 ######################
 
 class _SLDSStatesGibbs(_SLDSStates):
-    @property
-    def aBl(self):
-        if self._aBl is None:
-            aBl = self._aBl = np.empty((self.T, self.num_states))
-            ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
-                self.emission_distns
-
-            for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
-                aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
-                aBl[:-1,idx] = d2.log_likelihood(self.strided_gaussian_states)
-                aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data))
-
-            aBl[np.isnan(aBl).any(1)] = 0.
-        return self._aBl
-
     def resample(self, niter=1):
         niter = self.niter if hasattr(self, 'niter') else niter
         for itr in xrange(niter):
@@ -298,7 +283,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         J_pair_22, J_pair_21, J_pair_11, logdet_pair = \
             get_paramseq(self.dynamics_distns)
 
-        return J_pair_11, J_pair_21, J_pair_22
+        return J_pair_11, -J_pair_21, J_pair_22
 
     @property
     def expected_info_emission_params(self):
@@ -353,14 +338,14 @@ class _SLDSStatesMeanField(_SLDSStates):
     @property
     def mf_aBl(self):
         if self._mf_aBl is None:
-            mf_aBl = self._mf_aBl = np.empty((self.T, self.num_states))
+            mf_aBl = self._mf_aBl = np.zeros((self.T, self.num_states))
             ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
                 self.emission_distns
 
             for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
                 mf_aBl[0,idx] = d1.expected_log_likelihood(
                     stats=(self.smoothed_mus[0], self.ExxT[0], 1.))
-                mf_aBl[:-1,idx] = d2.expected_log_likelihood(
+                mf_aBl[:-1,idx] += d2.expected_log_likelihood(
                     stats=self.E_dynamics_stats)
                 mf_aBl[:,idx] += d3.expected_log_likelihood(
                     stats=self.E_emission_stats)
@@ -374,7 +359,11 @@ class _SLDSStatesMeanField(_SLDSStates):
             self.meanfield_update_discrete_states()
             self.meanfield_update_gaussian_states()
 
+        self._mf_aBl = None
+
     def _init_mf_from_gibbs(self):
+        # Base class sets the expected HMM stats
+        # the first meanfield step will update the HMM params accordingly
         super(_SLDSStatesMeanField, self)._init_mf_from_gibbs()
         self.meanfield_update_gaussian_states()
 
@@ -423,7 +412,6 @@ class _SLDSStatesMeanField(_SLDSStates):
             EyxT = self.EyxT = self.data[:, :, None] * self.smoothed_mus[:, None, :]
             self.E_emission_stats = (EyyT, EyxT, ExxT, np.ones(T))
 
-        self._mf_aBl = None  # TODO
 
     def get_vlb(self, most_recently_updated=False):
         if not most_recently_updated:
@@ -433,6 +421,26 @@ class _SLDSStatesMeanField(_SLDSStates):
             hmm_vlb = super(_SLDSStatesMeanField, self).get_vlb(
                 most_recently_updated=False)
             return hmm_vlb + self._mf_lds_normalizer
+
+
+    def meanfield_smooth(self):
+        # Use the smoothed latent states in combination with the expected
+        # discrete states and observation matrices
+        expand = lambda a: a[None, ...]
+        stack_set = lambda x: np.concatenate(map(expand, x))
+
+        # E_C, E_CCT, E_sigmasq_inv, _ = self.emission_distn.mf_expectations
+        if self.model._single_emission:
+            # TODO: Improve this
+            EC = self.emission_distns[0].mf_expectations[0]
+            return self.smoothed_mus.dot(EC.T)
+        else:
+            # TODO: Improve this
+            mf_params = [d.mf_expectations for d in self.emission_distns]
+            ECs = stack_set([prms[0] for prms in mf_params])
+            ECs = np.tensordot(self.expected_states, ECs, axes=1)
+            return np.array([C.dot(mu) for C, mu in zip(ECs, self.smoothed_mus)])
+
 
 
 class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
@@ -544,21 +552,26 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
     @property
     def aBl(self):
         if self._aBl is None:
-            aBl = self._aBl = np.empty((self.T, self.num_states))
+            aBl = self._aBl = np.zeros((self.T, self.num_states))
             ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
-                self.emission_distns
+                            self.emission_distns
 
             for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
                 aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
-                aBl[:-1,idx] = d2.log_likelihood(self.strided_gaussian_states)
-                aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data), mask=self.mask)
+                aBl[:-1,idx] += d2.log_likelihood(self.strided_gaussian_states)
+
+                if self.mask is None:
+                    aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data))
+                else:
+                    aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data), mask=self.mask)
 
             aBl[np.isnan(aBl).any(1)] = 0.
+
         return self._aBl
 
     def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
         if self.mask is None:
-            super(_SLDSStatesMaskedData, self).\
+            return super(_SLDSStatesMaskedData, self).\
                 _set_gaussian_expected_stats(smoothed_mus, smoothed_sigmas, E_xtp1_xtT)
 
         assert not np.isnan(E_xtp1_xtT).any()

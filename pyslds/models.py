@@ -46,6 +46,9 @@ class _SLDSMixin(object):
     def diagonal_noise(self):
         return all([isinstance(ed, DiagonalRegression) for ed in self.emission_distns])
 
+    @property
+    def has_missing_data(self):
+        return any([s.mask is not None for s in self.states_list])
 
 class _SLDSGibbsMixin(_SLDSMixin):
     def resample_parameters(self):
@@ -76,16 +79,23 @@ class _SLDSGibbsMixin(_SLDSMixin):
 
     def resample_emission_distns(self):
         if self._single_emission:
+            mask = [s.mask for s in self.states_list] \
+                if self.has_missing_data else None
+
             self._emission_distn.resample(
-                [(s.gaussian_states, s.data)
-                 for s in self.states_list])
+                data=[(s.gaussian_states, s.data)
+                      for s in self.states_list],
+                mask=mask)
         else:
             for state, d in enumerate(self.emission_distns):
+                mask = [s.mask[s.stateseq==state] for s in self.states_list] \
+                    if self.has_missing_data else None
+
                 d.resample(
                     data=[(s.gaussian_states[s.stateseq == state],
                            s.data[s.stateseq == state])
                           for s in self.states_list],
-                    mask=[s.mask for s in self.states_list])
+                    mask=mask)
         self._clear_caches()
 
     def resample_obs_distns(self):
@@ -165,6 +175,19 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
 
     def meanfield_update_obs_distns(self):
         pass  # handled in meanfield_update_parameters
+
+    ### init
+    def _init_mf_from_gibbs(self):
+        # Now also update the emission and dynamics params
+        for ed in self.emission_distns:
+            if hasattr(ed, "_initialize_mean_field"):
+                ed._initialize_mean_field()
+        for dd in self.dynamics_distns:
+            if hasattr(dd, "_initialize_mean_field"):
+                dd._initialize_mean_field()
+
+        for s in self.states_list:
+            s._init_mf_from_gibbs()
 
     ### vlb
 
