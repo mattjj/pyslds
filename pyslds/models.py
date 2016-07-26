@@ -79,23 +79,32 @@ class _SLDSGibbsMixin(_SLDSMixin):
 
     def resample_emission_distns(self):
         if self._single_emission:
-            mask = [s.mask for s in self.states_list] \
-                if self.has_missing_data else None
-
-            self._emission_distn.resample(
-                data=[(s.gaussian_states, s.data)
-                      for s in self.states_list],
-                mask=mask)
-        else:
-            for state, d in enumerate(self.emission_distns):
-                mask = [s.mask[s.stateseq==state] for s in self.states_list] \
-                    if self.has_missing_data else None
-
-                d.resample(
-                    data=[(s.gaussian_states[s.stateseq == state],
-                           s.data[s.stateseq == state])
+            if self.has_missing_data:
+                mask = [s.mask for s in self.states_list]
+                self._emission_distn.resample(
+                    data=[(s.gaussian_states, s.data)
                           for s in self.states_list],
                     mask=mask)
+            else:
+                self._emission_distn.resample(
+                    data=[(s.gaussian_states, s.data)
+                          for s in self.states_list])
+        else:
+            for state, d in enumerate(self.emission_distns):
+                if self.has_missing_data:
+                    mask = [s.mask[s.stateseq==state] for s in self.states_list] \
+                        if self.has_missing_data else None
+
+                    d.resample(
+                        data=[(s.gaussian_states[s.stateseq == state],
+                               s.data[s.stateseq == state])
+                              for s in self.states_list],
+                        mask=mask)
+                else:
+                    d.resample(
+                        data=[(s.gaussian_states[s.stateseq == state],
+                               s.data[s.stateseq == state])
+                              for s in self.states_list])
         self._clear_caches()
 
     def resample_obs_distns(self):
