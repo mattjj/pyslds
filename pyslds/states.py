@@ -540,25 +540,38 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
         if self.mask is None:
             return super(_SLDSStatesMaskedData, self).info_emission_params
 
-        expand = lambda a: a[None,...]
-        stack_set = lambda x: np.concatenate(map(expand, x))
-
         if self.diagonal_noise:
-            sigmasq_set = [d.sigmasq_flat for d in self.emission_distns]
-            sigmasq = stack_set(sigmasq_set)[self.stateseq]
-            J_obs = self.mask / sigmasq
+            if self.model._single_emission:
+                sigmasq = self.emission_distns[0].sigmasq_flat
+                J_obs = self.mask / sigmasq
 
-            C_set = [d.A for d in self.emission_distns]
-            CCT_set = [np.array([np.outer(cp, cp) for cp in C]).
-                           reshape((self.D_emission, self.D_latent**2))
-                       for C in C_set]
+                C = self.emission_distns[0].A
+                CCT = np.array([np.outer(cp, cp) for cp in C]).\
+                    reshape((self.D_emission, self.D_latent ** 2))
 
-            J_node = np.zeros((self.T, self.D_latent**2))
-            h_node = np.zeros((self.T, self.D_latent))
-            for i in range(len(self.emission_distns)):
-                ti = np.where(self.stateseq == i)[0]
-                J_node[ti] = np.dot(J_obs[ti], CCT_set[i])
-                h_node[ti] = (self.data[ti] * J_obs[ti]).dot(C_set[i])
+                J_node = np.dot(J_obs, CCT)
+                h_node = (self.data * J_obs).dot(C)
+
+            else:
+                expand = lambda a: a[None, ...]
+                stack_set = lambda x: np.concatenate(map(expand, x))
+
+                sigmasq_set = [d.sigmasq_flat for d in self.emission_distns]
+                sigmasq = stack_set(sigmasq_set)[self.stateseq]
+                J_obs = self.mask / sigmasq
+
+                C_set = [d.A for d in self.emission_distns]
+                CCT_set = [np.array([np.outer(cp, cp) for cp in C]).
+                               reshape((self.D_emission, self.D_latent**2))
+                           for C in C_set]
+
+                J_node = np.zeros((self.T, self.D_latent**2))
+                h_node = np.zeros((self.T, self.D_latent))
+
+                for i in range(len(self.emission_distns)):
+                    ti = np.where(self.stateseq == i)[0]
+                    J_node[ti] = np.dot(J_obs[ti], CCT_set[i])
+                    h_node[ti] = (self.data[ti] * J_obs[ti]).dot(C_set[i])
 
             J_node = J_node.reshape((self.T, self.D_latent, self.D_latent))
 
@@ -628,14 +641,22 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
             ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
                             self.emission_distns
 
-            for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
+            for idx, (d1, d2) in enumerate(zip(ids, dds)):
                 aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
                 aBl[:-1,idx] += d2.log_likelihood(self.strided_gaussian_states)
 
+            if self.model._single_emission:
+                d3 = self.emission_distns[0]
                 if self.mask is None:
-                    aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data))
+                    aBl += d3.log_likelihood((self.gaussian_states, self.data))[:,None]
                 else:
-                    aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data), mask=self.mask)
+                    aBl += d3.log_likelihood((self.gaussian_states, self.data), mask=self.mask)[:,None]
+            else:
+                for idx, d3 in enumerate(eds):
+                    if self.mask is None:
+                        aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data))
+                    else:
+                        aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data), mask=self.mask)
 
             aBl[np.isnan(aBl).any(1)] = 0.
 
