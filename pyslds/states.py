@@ -59,7 +59,7 @@ class _SLDSStates(object):
         gss = np.empty((T,n),dtype='double')
         gss[0] = self.init_dynamics_distns[dss[0]].rvs()
 
-        for t in xrange(1,T):
+        for t in range(1,T):
             gss[t] = self.dynamics_distns[dss[t]].\
                 rvs(lagged_data=gss[t-1][None,:])
             assert np.all(np.isfinite(gss[t])), "SLDS appears to be unstable!"
@@ -73,7 +73,7 @@ class _SLDSStates(object):
         dss, gss = self.stateseq, self.gaussian_states
         data = np.empty((T,p),dtype='double')
 
-        for t in xrange(self.T):
+        for t in range(self.T):
             data[t] = self.emission_distns[dss[t]].\
                 rvs(x=gss[t][None,:], return_xy=False)
 
@@ -255,7 +255,7 @@ class _SLDSStates(object):
 class _SLDSStatesGibbs(_SLDSStates):
     def resample(self, niter=1):
         niter = self.niter if hasattr(self, 'niter') else niter
-        for itr in xrange(niter):
+        for itr in range(niter):
             self.resample_discrete_states()
             self.resample_gaussian_states()
 
