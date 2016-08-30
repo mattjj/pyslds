@@ -6,7 +6,7 @@ from builtins import zip
 import pyhsmm
 from pyhsmm.util.general import list_split
 
-from states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, \
+from pyslds.states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, \
     HSMMSLDSStatesEigen
 
 
