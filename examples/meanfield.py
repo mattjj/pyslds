@@ -43,21 +43,21 @@ P = 2
 D = data.shape[1]
 
 dynamics_distns = [
-    AutoRegression(
+    Regression(
         A=np.eye(P),sigma=np.eye(P),
         nu_0=3,S_0=3.*np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
-    for _ in xrange(Nmax)]
+    for _ in range(Nmax)]
 
 emission_distns = [
     Regression(
         A=np.eye(D),sigma=0.05*np.eye(D),
         nu_0=5.,S_0=np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
-    for _ in xrange(Nmax)]
+    for _ in range(Nmax)]
 
 
 init_dynamics_distns = [
     Gaussian(nu_0=4,sigma_0=4.*np.eye(P),mu_0=np.zeros(P),kappa_0=0.1)
-    for _ in xrange(Nmax)]
+    for _ in range(Nmax)]
 
 model = HMMSLDS(
     dynamics_distns=dynamics_distns,
