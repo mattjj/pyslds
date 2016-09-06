@@ -116,14 +116,14 @@ class _SLDSGibbsMixin(_SLDSMixin):
         import parallel
 
         if len(states_list) > 0:
-            joblib_args = map(self._get_joblib_pair, states_list)
+            joblib_args = list(map(self._get_joblib_pair, states_list))
 
             parallel.model = self
             parallel.args = list_split(joblib_args, num_procs)
 
             idxs = range(len(parallel.args))
             raw_stateseqs = Parallel(n_jobs=num_procs,backend='multiprocessing')\
-                    (map(delayed(parallel._get_sampled_stateseq), idxs))
+                    (list(map(delayed(parallel._get_sampled_stateseq), idxs)))
 
             flatten = lambda lst: [x for y in lst for x in y]
             raw_stateseqs = flatten(raw_stateseqs)
@@ -144,7 +144,7 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
 
 
     def meanfield_update_init_dynamics_distns(self):
-        sum_tuples = lambda lst: map(sum, zip(*lst))
+        sum_tuples = lambda lst: list(map(sum, zip(*lst)))
         E_stats = lambda i, s: \
             tuple(s.expected_states[0,i] * stat for stat in s.E_init_stats)
 
@@ -155,7 +155,7 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
 
     def meanfield_update_dynamics_distns(self):
         contract = partial(np.tensordot, axes=1)
-        sum_tuples = lambda lst: map(sum, zip(*lst))
+        sum_tuples = lambda lst: list(map(sum, zip(*lst)))
         E_stats = lambda i, s: \
             tuple(contract(s.expected_states[1:,i], stat) for stat in s.E_dynamics_stats)
 
@@ -164,7 +164,7 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
                 stats=sum_tuples(E_stats(state, s) for s in self.states_list))
 
     def meanfield_update_emission_distns(self):
-        sum_tuples = lambda lst: map(sum, zip(*lst))
+        sum_tuples = lambda lst: list(map(sum, zip(*lst)))
 
         if self._single_emission:
             E_stats = lambda s: \

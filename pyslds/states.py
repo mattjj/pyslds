@@ -193,9 +193,6 @@ class _SLDSStates(object):
         h_pair_1 = np.einsum('ni,nij->nj', self.inputs, h_pair_1)
         h_pair_2 = np.einsum('ni,nij->nj', self.inputs, h_pair_2)
 
-        # h_pair_1 = self.inputs.dot(self.B.T).dot(J_pair_21)
-        # h_pair_2 = self.inputs.dot(np.linalg.solve(self.sigma_states, self.B).T)
-
         return J_pair_11, J_pair_21, J_pair_22, h_pair_1, h_pair_2
 
     @property
@@ -325,8 +322,18 @@ class _SLDSStatesMeanField(_SLDSStates):
         J_pair_22, J_pair_21, J_pair_11, logdet_pair = \
             get_paramseq(self.dynamics_distns)
 
-        # TODO: Compute expected h_pair_1 and h_pair_2
-        return J_pair_11, -J_pair_21, J_pair_22
+        # Compute E[B^T Q^{-1}] and E[B^T Q^{-1} A]
+        n = self.D_latent
+        E_Qinv = J_pair_22
+        E_AT_Qinv = J_pair_21[:,:n,:]
+        E_BT_Qinv = J_pair_21[:,n:,:]
+        E_BT_Qinv_A = J_pair_11[:,n:,:n]
+        E_AT_Qinv_A = J_pair_11[:,:n,:n].copy("C")
+
+        h_pair_1 = -np.einsum('ni,nij->nj', self.inputs, E_BT_Qinv_A)
+        h_pair_2 = np.einsum('ni,nij->nj', self.inputs, E_BT_Qinv)
+
+        return E_AT_Qinv_A, -E_AT_Qinv, E_Qinv, h_pair_1, h_pair_2
 
     @property
     def expected_info_emission_params(self):
@@ -337,10 +344,17 @@ class _SLDSStatesMeanField(_SLDSStates):
             return list(map(contract, zip(*params)))
 
         J_yy, J_yx, J_node, logdet_node = get_paramseq(self.emission_distns)
-        h_node = np.einsum('ni,nij->nj', self.data, J_yx)
 
-        # TODO: Compute expected h_node with inputs
-        return J_node, h_node
+        # TODO: Fix this! The output of get_paramseq is length T
+        n = self.D_latent
+        E_Rinv_C = J_yx[:,:n].copy("C")
+        E_DT_Rinv_C = J_node[:,n:,:n]
+        E_CT_Rinv_C = J_node[:,:n,:n].copy("C")
+
+        h_node = np.einsum('ni,nij->nj', self.data, E_Rinv_C)
+        h_node -= np.einsum('ni,nij->nj', self.inputs, E_DT_Rinv_C)
+
+        return E_CT_Rinv_C, h_node
 
     @property
     def expected_info_params(self):
