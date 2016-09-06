@@ -132,7 +132,7 @@ def svi_update(model, stepsize, minibatchsize):
 lls, z_smpls, smoothed_obss = zip(*[gibbs_update(model) for _ in progprint_xrange(N_samples)])
 
 ## Mean field (initialized with Gibbs)
-# for _ in progprint_xrange(200):
+# for _ in progprint_xrange(20):
 #     model.resample_model()
 # model._init_mf_from_gibbs()
 #

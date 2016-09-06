@@ -345,7 +345,6 @@ class _SLDSStatesMeanField(_SLDSStates):
 
         J_yy, J_yx, J_node, logdet_node = get_paramseq(self.emission_distns)
 
-        # TODO: Fix this! The output of get_paramseq is length T
         n = self.D_latent
         E_Rinv_C = J_yx[:,:n].copy("C")
         E_DT_Rinv_C = J_node[:,n:,:n]
@@ -591,7 +590,9 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
     @property
     def expected_info_emission_params(self):
-        # TODO: handle inputs
+        if self.D_input > 0:
+            raise NotImplementedError("Inputs and missing data is not yet supported!")
+
         if self.mask is None:
             return super(_SLDSStatesMaskedData, self).expected_info_emission_params
 
