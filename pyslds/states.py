@@ -283,34 +283,11 @@ class _SLDSStates(object):
         # self._set_expected_stats(
         #     self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
 
-
 ######################
 #  algorithm mixins  #
 ######################
 
 class _SLDSStatesGibbs(_SLDSStates):
-    @property
-    def aBl(self):
-        if self._aBl is None:
-            aBl = self._aBl = np.empty((self.T, self.num_states))
-            ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
-                self.emission_distns
-
-            for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
-                # Initial state distribution
-                aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
-
-                # Dynamics
-                xs = np.hstack((self.gaussian_states[:-1], self.inputs[:-1]))
-                aBl[:-1,idx] = d2.log_likelihood((xs, self.gaussian_states[1:]))
-
-                # Emissions
-                xs = np.hstack((self.gaussian_states, self.inputs))
-                aBl[:,idx] += d3.log_likelihood((xs, self.data))
-
-            aBl[np.isnan(aBl).any(1)] = 0.
-        return self._aBl
-
     def resample(self, niter=1):
         niter = self.niter if hasattr(self, 'niter') else niter
         for itr in range(niter):
@@ -349,7 +326,6 @@ class _SLDSStatesMeanField(_SLDSStates):
             get_paramseq(self.dynamics_distns)
 
         # TODO: Compute expected h_pair_1 and h_pair_2
-
         return J_pair_11, -J_pair_21, J_pair_22
 
     @property
@@ -364,7 +340,6 @@ class _SLDSStatesMeanField(_SLDSStates):
         h_node = np.einsum('ni,nij->nj', self.data, J_yx)
 
         # TODO: Compute expected h_node with inputs
-
         return J_node, h_node
 
     @property
@@ -441,20 +416,6 @@ class _SLDSStatesMeanField(_SLDSStates):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
 
     def meanfield_update_gaussian_states(self):
-        # TODO: Handle inputs
-        # J_init = np.linalg.inv(self.sigma_init)
-        # h_init = np.linalg.solve(self.sigma_init, self.mu_init)
-        #
-        # def get_paramseq(distns):
-        #     contract = partial(np.tensordot, self.expected_states, axes=1)
-        #     std_param = lambda d: d._natural_to_standard(d.mf_natural_hypparam)
-        #     params = [mniw_expectedstats(*std_param(d)) for d in distns]
-        #     return map(contract, zip(*params))
-        #
-        # J_pair_22, J_pair_21, J_pair_11, logdet_pair = \
-        #     get_paramseq(self.dynamics_distns)
-        # J_yy, J_yx, J_node, logdet_node = get_paramseq(self.emission_distns)
-        # h_node = np.einsum('ni,nij->nj', self.data, J_yx)
         self._mf_lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, \
             E_xtp1_xtT = info_E_step(*self.expected_info_params)
 
@@ -567,7 +528,6 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
                     reshape((self.D_emission, self.D_latent ** 2))
 
                 J_node = np.dot(J_obs, CCT)
-
                 # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
                 h_node = (self.data * J_obs).dot(C)
                 if self.D_input > 0:
