@@ -85,6 +85,10 @@ class _SLDSGibbsMixin(_SLDSMixin):
             for state, d in enumerate(self.emission_distns):
                 d.resample([(x[z == state], y[z == state])
                             for z,x,y in zip(zs, xs, ys)])
+                d.resample([
+                    (x[s.stateseq == state],
+                     y[s.stateseq == state])
+                    for x,y in zip(xs, ys)])
         self._clear_caches()
 
     def resample_obs_distns(self):
