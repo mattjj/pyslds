@@ -167,7 +167,7 @@ class _SLDSStates(object):
     @property
     def info_dynamics_params(self):
         expand = lambda a: a[None,...]
-        stack_set = lambda x: np.concatenate(map(expand, x))
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
         A_set = [d.A for d in self.dynamics_distns]
         Q_set = [d.sigma for d in self.dynamics_distns]
@@ -186,7 +186,7 @@ class _SLDSStates(object):
     def info_emission_params(self):
 
         expand = lambda a: a[None,...]
-        stack_set = lambda x: np.concatenate(map(expand, x))
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
 
         # TODO: Double check this
@@ -217,7 +217,7 @@ class _SLDSStates(object):
         logdet_pairs = [-np.linalg.slogdet(Q)[1] for Q in Q_set]
 
         expand = lambda a: a[None, ...]
-        stack_set = lambda x: np.concatenate(map(expand, x))
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
         logdet_pairs = stack_set(logdet_pairs)[self.stateseq]
 
         # Observations
@@ -320,7 +320,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         def get_paramseq(distns):
             contract = partial(np.tensordot, self.expected_states, axes=1)
             params = [d.meanfield_expectedstats() for d in distns]
-            return map(contract, zip(*params))
+            return list(map(contract, zip(*params)))
 
         J_pair_22, J_pair_21, J_pair_11, logdet_pair = \
             get_paramseq(self.dynamics_distns)
@@ -333,7 +333,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         def get_paramseq(distns):
             contract = partial(np.tensordot, self.expected_states, axes=1)
             params = [d.meanfield_expectedstats() for d in distns]
-            return map(contract, zip(*params))
+            return list(map(contract, zip(*params)))
 
         J_yy, J_yx, J_node, logdet_node = get_paramseq(self.emission_distns)
         h_node = np.einsum('ni,nij->nj', self.data, J_yx)
@@ -355,10 +355,10 @@ class _SLDSStatesMeanField(_SLDSStates):
             contract = partial(np.tensordot, self.expected_states, axes=1)
             std_param = lambda d: d._natural_to_standard(d.mf_natural_hypparam)
             params = [mniw_expectedstats(*std_param(d)) for d in distns]
-            return map(contract, zip(*params))
+            return list(map(contract, zip(*params)))
 
         expand = lambda a: a[None, ...]
-        stack_set = lambda x: np.concatenate(map(expand, x))
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
         _, _, _, logdet_pairs = \
             get_paramseq(self.dynamics_distns)
@@ -498,7 +498,7 @@ class _SLDSStatesMeanField(_SLDSStates):
         # Use the smoothed latent states in combination with the expected
         # discrete states and observation matrices
         expand = lambda a: a[None, ...]
-        stack_set = lambda x: np.concatenate(map(expand, x))
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
         # E_C, E_CCT, E_sigmasq_inv, _ = self.emission_distn.mf_expectations
         if self.model._single_emission:
@@ -554,7 +554,7 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
             else:
                 expand = lambda a: a[None, ...]
-                stack_set = lambda x: np.concatenate(map(expand, x))
+                stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
                 sigmasq_set = [d.sigmasq_flat for d in self.emission_distns]
                 sigmasq = stack_set(sigmasq_set)[self.stateseq]
@@ -597,7 +597,7 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
         if self.diagonal_noise:
             expand = lambda a: a[None, ...]
-            stack_set = lambda x: np.concatenate(map(expand, x))
+            stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
             # E_C, E_CCT, E_sigmasq_inv, _ = self.emission_distn.mf_expectations
             mf_params = [d.mf_expectations for d in self.emission_distns]
