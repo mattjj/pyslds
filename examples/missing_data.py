@@ -4,7 +4,7 @@ import numpy.random as npr
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from pybasicbayes.distributions import AutoRegression, DiagonalRegression, Gaussian
+from pybasicbayes.distributions import Regression, DiagonalRegression, Gaussian
 from pybasicbayes.util.text import progprint_xrange
 
 from pyslds.models import HMMSLDS, WeakLimitStickyHDPHMMSLDS
@@ -39,7 +39,7 @@ sigma_obs = 0.5 * np.ones(D_obs)
 #  generate data  #
 ###################
 init_dynamics_distns = [Gaussian(mu=mu_init, sigma=sigma_init) for _ in range(K)]
-dynamics_distns = [AutoRegression(A=A, sigma=0.01*np.eye(D_latent)) for A in As]
+dynamics_distns = [Regression(A=A, sigma=0.01*np.eye(D_latent)) for A in As]
 emission_distns = DiagonalRegression(D_obs, D_latent, A=C, sigmasq=sigma_obs)
 
 truemodel = HMMSLDS(
@@ -79,7 +79,7 @@ model = WeakLimitStickyHDPHMMSLDS(
             mu=mu_init, sigma=sigma_init
         ) for _ in range(Kmax)],
     dynamics_distns=
-        [AutoRegression(
+        [Regression(
             A=np.eye(D_latent), sigma=np.eye(D_latent),
             nu_0=D_latent+3,
             S_0=D_latent*np.eye(D_latent),

@@ -169,10 +169,12 @@ class _SLDSStates(object):
         expand = lambda a: a[None,...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-        A_set = [d.A for d in self.dynamics_distns]
+        A_set = [d.A[:,:self.D_latent] for d in self.dynamics_distns]
+        B_set = [d.A[:,self.D_latent:] for d in self.dynamics_distns]
         Q_set = [d.sigma for d in self.dynamics_distns]
 
         # Get the pairwise potentials
+        # TODO: Check for diagonal before inverting
         J_pair_22_set = [np.linalg.inv(Q) for Q in Q_set]
         J_pair_21_set = [-J22.dot(A) for A,J22 in zip(A_set, J_pair_22_set)]
         J_pair_11_set = [A.T.dot(-J21) for A,J21 in zip(A_set, J_pair_21_set)]
@@ -180,7 +182,21 @@ class _SLDSStates(object):
         J_pair_11 = stack_set(J_pair_11_set)[self.stateseq]
         J_pair_21 = stack_set(J_pair_21_set)[self.stateseq]
         J_pair_22 = stack_set(J_pair_22_set)[self.stateseq]
-        return J_pair_11, J_pair_21, J_pair_22
+
+        # Check if diagonal and avoid inverting D_obs x D_obs matrix
+        h_pair_1_set = [B.T.dot(J) for B, J in zip(B_set, J_pair_21_set)]
+        h_pair_2_set = [B.T.dot(Qi) for B, Qi in zip(B_set, J_pair_22_set)]
+
+        h_pair_1 = stack_set(h_pair_1_set)[self.stateseq]
+        h_pair_2 = stack_set(h_pair_2_set)[self.stateseq]
+
+        h_pair_1 = np.einsum('ni,nij->nj', self.inputs, h_pair_1)
+        h_pair_2 = np.einsum('ni,nij->nj', self.inputs, h_pair_2)
+
+        # h_pair_1 = self.inputs.dot(self.B.T).dot(J_pair_21)
+        # h_pair_2 = self.inputs.dot(np.linalg.solve(self.sigma_states, self.B).T)
+
+        return J_pair_11, J_pair_21, J_pair_22, h_pair_1, h_pair_2
 
     @property
     def info_emission_params(self):
@@ -191,16 +207,21 @@ class _SLDSStates(object):
 
         # TODO: Double check this
         # TODO: Check for diagonal emissions
-        C_set = [d.A for d in self.emission_distns]
+        C_set = [d.A[:,:self.D_latent] for d in self.emission_distns]
+        D_set = [d.A[:,self.D_latent:] for d in self.emission_distns]
         R_set = [d.sigma for d in self.emission_distns]
         RC_set = [np.linalg.solve(R, C) for C,R in zip(C_set, R_set)]
         CRC_set = [C.T.dot(RC) for C,RC in zip(C_set, RC_set)]
+        DRC_set = [D.T.dot(RC) for D,RC in zip(D_set, RC_set)]
 
         J_node = stack_set(CRC_set)[self.stateseq]
 
         # TODO: Faster to replace this with a loop?
+        # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
         RC = stack_set(RC_set)[self.stateseq]
+        DRC = stack_set(DRC_set)[self.stateseq]
         h_node = np.einsum('ni,nij->nj', self.data, RC)
+        h_node -= np.einsum('ni,nij->nj', self.inputs, DRC)
 
         return J_node, h_node
 
@@ -305,14 +326,16 @@ class _SLDSStatesGibbs(_SLDSStates):
     def resample_gaussian_states(self):
         self._aBl = None  # clear any caching
         self._gaussian_normalizer, self.gaussian_states = \
-            # filter_and_sample(
-            #     self.mu_init, self.sigma_init,
-            #     self.As, self.Bs, self.sigma_statess,
-            #     self.Cs, self.Ds, self.sigma_obss,
-            #     self.inputs, self.data)
-        info_sample(*self.info_params)
+            info_sample(*self.info_params)
         self._gaussian_normalizer += LDSStates._info_extra_loglike_terms(
             *self.extra_info_params, isdiag=self.diagonal_noise)
+
+        # self._gaussian_normalizer, self.gaussian_states = \
+        #     filter_and_sample(
+        #         self.mu_init, self.sigma_init,
+        #         self.As, self.Bs, self.sigma_statess,
+        #         self.Cs, self.Ds, self.sigma_obss,
+        #         self.inputs, self.data)
 
 class _SLDSStatesMeanField(_SLDSStates):
     @property
@@ -324,6 +347,8 @@ class _SLDSStatesMeanField(_SLDSStates):
 
         J_pair_22, J_pair_21, J_pair_11, logdet_pair = \
             get_paramseq(self.dynamics_distns)
+
+        # TODO: Compute expected h_pair_1 and h_pair_2
 
         return J_pair_11, -J_pair_21, J_pair_22
 
@@ -337,6 +362,8 @@ class _SLDSStatesMeanField(_SLDSStates):
 
         J_yy, J_yx, J_node, logdet_node = get_paramseq(self.emission_distns)
         h_node = np.einsum('ni,nij->nj', self.data, J_yx)
+
+        # TODO: Compute expected h_node with inputs
 
         return J_node, h_node
 
@@ -437,18 +464,6 @@ class _SLDSStatesMeanField(_SLDSStates):
         self._set_gaussian_expected_stats(
             self.smoothed_mus,self.smoothed_sigmas,E_xtp1_xtT)
 
-    def E_step(self):
-        # TODO: Update normalizer?
-        self._normalizer, self.smoothed_mus, self.smoothed_sigmas, \
-        E_xtp1_xtT = E_step(
-            self.mu_init, self.sigma_init,
-            self.As, self.Bs, self.sigma_statess,
-            self.Cs, self.Ds, self.sigma_obss,
-            self.inputs, self.data)
-
-        self._set_gaussian_expected_stats(
-            self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
-
     def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
         # TODO: Handle inputs
 
@@ -515,7 +530,7 @@ class _SLDSStatesMeanField(_SLDSStates):
 
 
 class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
-    def __init__(self, model, T=None, data=None, mask=None, stateseq=None, gaussian_states=None,
+    def __init__(self, model, T=None, data=None, inputs=None, mask=None, stateseq=None, gaussian_states=None,
                  generate=True, initialize_from_prior=True, fixed_stateseq=None):
         if mask is not None:
             assert mask.shape == data.shape
@@ -530,8 +545,9 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
         else:
             self.mask = None
 
-        super(_SLDSStatesMaskedData, self).__init__(model, T=T, data=data, stateseq=stateseq,
-                                                    gaussian_states=gaussian_states, generate=generate,
+        super(_SLDSStatesMaskedData, self).__init__(model, T=T, data=data, inputs=inputs,
+                                                    stateseq=stateseq, gaussian_states=gaussian_states,
+                                                    generate=generate,
                                                     initialize_from_prior=initialize_from_prior,
                                                     fixed_stateseq=fixed_stateseq)
 
@@ -545,12 +561,18 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
                 sigmasq = self.emission_distns[0].sigmasq_flat
                 J_obs = self.mask / sigmasq
 
-                C = self.emission_distns[0].A
+                C = self.emission_distns[0].A[:,:self.D_latent]
+                D = self.emission_distns[0].A[:,self.D_latent:]
                 CCT = np.array([np.outer(cp, cp) for cp in C]).\
                     reshape((self.D_emission, self.D_latent ** 2))
 
                 J_node = np.dot(J_obs, CCT)
+
+                # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
                 h_node = (self.data * J_obs).dot(C)
+                if self.D_input > 0:
+                    h_node -= (self.inputs.dot(D.T) * J_obs).dot(C)
+
 
             else:
                 expand = lambda a: a[None, ...]
@@ -560,7 +582,8 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
                 sigmasq = stack_set(sigmasq_set)[self.stateseq]
                 J_obs = self.mask / sigmasq
 
-                C_set = [d.A for d in self.emission_distns]
+                C_set = [d.A[:,:self.D_latent] for d in self.emission_distns]
+                D_set = [d.A[:,self.D_latent:] for d in self.emission_distns]
                 CCT_set = [np.array([np.outer(cp, cp) for cp in C]).
                                reshape((self.D_emission, self.D_latent**2))
                            for C in C_set]
@@ -572,6 +595,8 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
                     ti = np.where(self.stateseq == i)[0]
                     J_node[ti] = np.dot(J_obs[ti], CCT_set[i])
                     h_node[ti] = (self.data[ti] * J_obs[ti]).dot(C_set[i])
+                    if self.D_input > 0:
+                        h_node[ti] -= (self.inputs[ti].dot(D_set[i].T) * J_obs[ti]).dot(C_set[i])
 
             J_node = J_node.reshape((self.T, self.D_latent, self.D_latent))
 
@@ -592,6 +617,7 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
     @property
     def expected_info_emission_params(self):
+        # TODO: handle inputs
         if self.mask is None:
             return super(_SLDSStatesMaskedData, self).expected_info_emission_params
 
@@ -635,34 +661,40 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
     @property
     def aBl(self):
-        # TODO: handle inputs
         if self._aBl is None:
             aBl = self._aBl = np.zeros((self.T, self.num_states))
             ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
                             self.emission_distns
 
             for idx, (d1, d2) in enumerate(zip(ids, dds)):
-                aBl[0,idx] = d1.log_likelihood(self.gaussian_states[0])
-                aBl[:-1,idx] += d2.log_likelihood(self.strided_gaussian_states)
+                # Initial state distribution
+                aBl[0, idx] = d1.log_likelihood(self.gaussian_states[0])
 
+                # Dynamics
+                xs = np.hstack((self.gaussian_states[:-1], self.inputs[:-1]))
+                aBl[:-1, idx] = d2.log_likelihood((xs, self.gaussian_states[1:]))
+
+            # Emissions
+            xs = np.hstack((self.gaussian_states, self.inputs))
             if self.model._single_emission:
                 d3 = self.emission_distns[0]
                 if self.mask is None:
-                    aBl += d3.log_likelihood((self.gaussian_states, self.data))[:,None]
+                    aBl += d3.log_likelihood((xs, self.data))[:,None]
                 else:
-                    aBl += d3.log_likelihood((self.gaussian_states, self.data), mask=self.mask)[:,None]
+                    aBl += d3.log_likelihood((xs, self.data), mask=self.mask)[:,None]
             else:
                 for idx, d3 in enumerate(eds):
                     if self.mask is None:
-                        aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data))
+                        aBl[:,idx] += d3.log_likelihood((xs, self.data))
                     else:
-                        aBl[:,idx] += d3.log_likelihood((self.gaussian_states, self.data), mask=self.mask)
+                        aBl[:,idx] += d3.log_likelihood((xs, self.data), mask=self.mask)
 
             aBl[np.isnan(aBl).any(1)] = 0.
 
         return self._aBl
 
     def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
+        # TODO: Handle inputs
         if self.mask is None:
             return super(_SLDSStatesMaskedData, self).\
                 _set_gaussian_expected_stats(smoothed_mus, smoothed_sigmas, E_xtp1_xtT)
