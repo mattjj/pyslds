@@ -26,5 +26,6 @@ def get_empirical_ar_params(train_datas, params):
     # Use the inferred noise covariance as the prior mean
     # E_{IW}[S] = S_0 / (nu_0 - datadimension - 1)
     obs_params["S_0"] = obs_distn.sigma * (params["nu_0"] - datadimension - 1)
+    obs_params["M_0"] = obs_distn.A.copy()
 
     return obs_params
