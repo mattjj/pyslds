@@ -91,7 +91,8 @@ ax3 = fig.add_subplot(gs[-1], sharex=ax1)
 
 im = ax1.matshow(model.states_list[0].expected_states.T, aspect='auto')
 ax1.set_xticks([])
-ax1.set_yticks([])
+ax1.set_yticks(np.arange(Nmax))
+ax1.set_ylabel("Discrete State")
 
 ax2.matshow(model.states_list[0].expected_states.argmax(1)[None,:], aspect='auto')
 ax2.set_xticks([])
@@ -100,6 +101,7 @@ ax2.set_yticks([])
 ax3.matshow(labels[None,:], aspect='auto')
 ax3.set_xticks([])
 ax3.set_yticks([])
+ax3.set_xlabel("Time")
 
 
 plt.show()
