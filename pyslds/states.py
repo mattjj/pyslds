@@ -829,10 +829,24 @@ class _SLDSStatesCountData(_SLDSStatesGibbs):
 
         return J_init, h_init, logdet_pairs, J_yy, logdet_node, self.data * self.mask
 
+    @property
+    def expected_info_emission_params(self):
+        if self.has_count_data:
+            raise NotImplementedError("Mean field with count observations is not yet supported")
+
+        return super(_SLDSStatesCountData, self).expected_info_emission_params
+
+    @property
+    def expected_extra_info_params(self):
+        if self.has_count_data:
+            raise NotImplementedError("Mean field with count observations is not yet supported")
+
+        return super(_SLDSStatesCountData, self).expected_extra_info_params
+
     @staticmethod
     def empirical_rate(data, sigma=3.0):
         """
-        Smooth X to get an empirical rate
+        Smooth count data to get an empirical rate
         """
         from scipy.ndimage.filters import gaussian_filter1d
         return 0.001 + gaussian_filter1d(data.astype(np.float), sigma, axis=0)
