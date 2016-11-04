@@ -112,11 +112,11 @@ class _SLDSGibbsMixin(_SLDSMixin):
                     if self.has_count_data else None
 
                 if self.has_count_data:
-                    self._emission_distn.resample(data=data, mask=mask, omega=omega)
+                    d.resample(data=data, mask=mask, omega=omega)
                 elif self.has_missing_data:
-                    self._emission_distn.resample(data=data, mask=mask)
+                    d.resample(data=data, mask=mask)
                 else:
-                    self._emission_distn.resample(data=data)
+                    d.resample(data=data)
 
 
         self._clear_caches()
