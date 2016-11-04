@@ -2,12 +2,13 @@ from distutils.core import setup
 
 setup(
     name='pyslds',
-    version='0.0.1',
-    author='Matthew James Johnson',
+    version='0.0.2',
+    author='Matthew J Johnson and Scott W Linderman',
     author_email='mattjj@csail.mit.edu',
     url='https://github.com/mattjj/pyhsmm-slds',
     packages=['pyslds'],
     install_requires=[
         'numpy', 'scipy', 'matplotlib',
         'pybasicbayes', 'pyhsmm', 'pylds',
+        'pypolyagamma>=1.1'
     ])

@@ -20,7 +20,7 @@ class _SLDSMixin(object):
         self.dynamics_distns = dynamics_distns
 
         # Allow for a single, shared emission distribution
-        if isinstance(emission_distns, Distribution):
+        if not isinstance(emission_distns, list):
             self._single_emission = True
             self._emission_distn = emission_distns
             self.emission_distns = [emission_distns] * len(self.dynamics_distns)
@@ -49,6 +49,10 @@ class _SLDSMixin(object):
     @property
     def has_missing_data(self):
         return any([s.mask is not None for s in self.states_list])
+
+    @property
+    def has_count_data(self):
+        return any([hasattr(s, "omega") for s in self.states_list])
 
 class _SLDSGibbsMixin(_SLDSMixin):
     def resample_parameters(self):
@@ -86,8 +90,12 @@ class _SLDSGibbsMixin(_SLDSMixin):
         if self._single_emission:
             data = [(np.hstack((s.gaussian_states, s.inputs)), s.data)
                     for s in self.states_list]
-            if self.has_missing_data:
-                mask = [s.mask for s in self.states_list]
+            mask = [s.mask for s in self.states_list] if self.has_missing_data else None
+            omega = [s.omega for s in self.states_list] if self.has_count_data else None
+
+            if self.has_count_data:
+                self._emission_distn.resample(data=data, mask=mask, omega=omega)
+            elif self.has_missing_data:
                 self._emission_distn.resample(data=data, mask=mask)
             else:
                 self._emission_distn.resample(data=data)
@@ -97,11 +105,19 @@ class _SLDSGibbsMixin(_SLDSMixin):
                                     s.inputs[s.stateseq == state])),
                          s.data[s.stateseq == state])
                         for s in self.states_list]
-                if self.has_missing_data:
-                    mask = [s.mask[s.stateseq == state] for s in self.states_list]
-                    d.resample(data=data, mask=mask)
+
+                mask = [s.mask[s.stateseq == state] for s in self.states_list] \
+                    if self.has_missing_data else None
+                omega = [s.omega[s.stateseq == state] for s in self.states_list] \
+                    if self.has_count_data else None
+
+                if self.has_count_data:
+                    self._emission_distn.resample(data=data, mask=mask, omega=omega)
+                elif self.has_missing_data:
+                    self._emission_distn.resample(data=data, mask=mask)
                 else:
-                    d.resample(data=data)
+                    self._emission_distn.resample(data=data)
+
 
         self._clear_caches()
 

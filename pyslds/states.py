@@ -4,13 +4,15 @@ from functools import partial
 
 from pybasicbayes.util.stats import mniw_expectedstats
 
-from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen, _StatesBase
+from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
     GeoHSMMStates
 
-from autoregressive.util import AR_striding
 from pylds.states import LDSStates
 from pylds.lds_messages_interface import filter_and_sample, info_E_step, info_sample
+
+import pypolyagamma as ppg
+from pypolyagamma.distributions import _PGLogisticRegressionBase
 
 # TODO on instantiating, maybe gaussian states should be resampled
 # TODO make niter an __init__ arg instead of a method arg
@@ -51,7 +53,6 @@ class _SLDSStates(object):
         self.generate_gaussian_states()
 
     def generate_gaussian_states(self):
-        # TODO: Handle inputs
         # Generate from the prior and raise exception if unstable
         T, n = self.T, self.D_latent
 
@@ -70,7 +71,6 @@ class _SLDSStates(object):
         self.gaussian_states = gss
 
     def generate_obs(self):
-        # TODO: Handle inputs
         # Go through each time bin, get the discrete latent state,
         # use that to index into the emission_distns to get samples
         T, p = self.T, self.D_emission
@@ -78,9 +78,11 @@ class _SLDSStates(object):
         data = np.empty((T,p),dtype='double')
 
         for t in range(self.T):
-            data[t] = self.emission_distns[dss[t]].\
-                rvs(x=np.hstack((gss[t][None, :], self.inputs[t][None,:])),
-                    return_xy=False)
+            ed = self.emission_distns[0] if self.model._single_emission \
+                else self.emission_distns[dss[t]]
+            data[t] = \
+                ed.rvs(x=np.hstack((gss[t][None, :], self.inputs[t][None,:])),
+                       return_xy=False)
 
         return data
 
@@ -92,7 +94,7 @@ class _SLDSStates(object):
 
     @property
     def D_input(self):
-        return self.dynamics_distns[0].D_out - self.dynamics_distns[0].D_in
+        return self.dynamics_distns[0].D_in - self.dynamics_distns[0].D_out
 
     @property
     def D_emission(self):
@@ -201,7 +203,6 @@ class _SLDSStates(object):
         expand = lambda a: a[None,...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-
         # TODO: Double check this
         # TODO: Check for diagonal emissions
         C_set = [d.A[:,:self.D_latent] for d in self.emission_distns]
@@ -248,7 +249,6 @@ class _SLDSStates(object):
             logdet_node = -np.sum(np.log(rsq), axis=1)
 
         else:
-
             R_set = [d.sigma for d in self.emission_distns]
             R_inv_set = [np.linalg.inv(R) for R in R_set]
             R_logdet_set = [-np.linalg.slogdet(R)[1] for R in R_set]
@@ -303,13 +303,6 @@ class _SLDSStatesGibbs(_SLDSStates):
             info_sample(*self.info_params)
         self._gaussian_normalizer += LDSStates._info_extra_loglike_terms(
             *self.extra_info_params, isdiag=self.diagonal_noise)
-
-        # self._gaussian_normalizer, self.gaussian_states = \
-        #     filter_and_sample(
-        #         self.mu_init, self.sigma_init,
-        #         self.As, self.Bs, self.sigma_statess,
-        #         self.Cs, self.Ds, self.sigma_obss,
-        #         self.inputs, self.data)
 
 class _SLDSStatesMeanField(_SLDSStates):
     @property
@@ -513,7 +506,7 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
             from warnings import warn
             warn("data includes NaN's. Treating these as missing data.")
             self.mask = ~np.isnan(data)
-            # TODO: Remove this necessity
+            # TODO: We should make this unnecessary
             warn("zeroing out nans in data to make sure code works")
             data[np.isnan(data)] = 0
         else:
@@ -531,58 +524,79 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
             return super(_SLDSStatesMaskedData, self).info_emission_params
 
         if self.diagonal_noise:
-            if self.model._single_emission:
-                sigmasq = self.emission_distns[0].sigmasq_flat
-                J_obs = self.mask / sigmasq
+            return self._info_emission_params_diag
+        else:
+            return self._info_emission_params_dense
 
-                C = self.emission_distns[0].A[:,:self.D_latent]
-                D = self.emission_distns[0].A[:,self.D_latent:]
-                CCT = np.array([np.outer(cp, cp) for cp in C]).\
-                    reshape((self.D_emission, self.D_latent ** 2))
+    @property
+    def _info_emission_params_diag(self):
+        if self.model._single_emission:
+            sigmasq = self.emission_distns[0].sigmasq_flat
+            J_obs = self.mask / sigmasq
 
-                J_node = np.dot(J_obs, CCT)
-                # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
-                h_node = (self.data * J_obs).dot(C)
-                if self.D_input > 0:
-                    h_node -= (self.inputs.dot(D.T) * J_obs).dot(C)
+            C = self.emission_distns[0].A[:,:self.D_latent]
+            D = self.emission_distns[0].A[:,self.D_latent:]
+            CCT = np.array([np.outer(cp, cp) for cp in C]).\
+                reshape((self.D_emission, self.D_latent ** 2))
 
-
-            else:
-                expand = lambda a: a[None, ...]
-                stack_set = lambda x: np.concatenate(list(map(expand, x)))
-
-                sigmasq_set = [d.sigmasq_flat for d in self.emission_distns]
-                sigmasq = stack_set(sigmasq_set)[self.stateseq]
-                J_obs = self.mask / sigmasq
-
-                C_set = [d.A[:,:self.D_latent] for d in self.emission_distns]
-                D_set = [d.A[:,self.D_latent:] for d in self.emission_distns]
-                CCT_set = [np.array([np.outer(cp, cp) for cp in C]).
-                               reshape((self.D_emission, self.D_latent**2))
-                           for C in C_set]
-
-                J_node = np.zeros((self.T, self.D_latent**2))
-                h_node = np.zeros((self.T, self.D_latent))
-
-                for i in range(len(self.emission_distns)):
-                    ti = np.where(self.stateseq == i)[0]
-                    J_node[ti] = np.dot(J_obs[ti], CCT_set[i])
-                    h_node[ti] = (self.data[ti] * J_obs[ti]).dot(C_set[i])
-                    if self.D_input > 0:
-                        h_node[ti] -= (self.inputs[ti].dot(D_set[i].T) * J_obs[ti]).dot(C_set[i])
-
-            J_node = J_node.reshape((self.T, self.D_latent, self.D_latent))
+            J_node = np.dot(J_obs, CCT)
+            # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
+            h_node = (self.data * J_obs).dot(C)
+            if self.D_input > 0:
+                h_node -= (self.inputs.dot(D.T) * J_obs).dot(C)
 
         else:
-            raise NotImplementedError("Only supporting diagonal regression class right now")
+            expand = lambda a: a[None, ...]
+            stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
+            sigmasq_set = [d.sigmasq_flat for d in self.emission_distns]
+            sigmasq = stack_set(sigmasq_set)[self.stateseq]
+            J_obs = self.mask / sigmasq
+
+            C_set = [d.A[:,:self.D_latent] for d in self.emission_distns]
+            D_set = [d.A[:,self.D_latent:] for d in self.emission_distns]
+            CCT_set = [np.array([np.outer(cp, cp) for cp in C]).
+                           reshape((self.D_emission, self.D_latent**2))
+                       for C in C_set]
+
+            J_node = np.zeros((self.T, self.D_latent**2))
+            h_node = np.zeros((self.T, self.D_latent))
+
+            for i in range(len(self.emission_distns)):
+                ti = np.where(self.stateseq == i)[0]
+                J_node[ti] = np.dot(J_obs[ti], CCT_set[i])
+                h_node[ti] = (self.data[ti] * J_obs[ti]).dot(C_set[i])
+                if self.D_input > 0:
+                    h_node[ti] -= (self.inputs[ti].dot(D_set[i].T) * J_obs[ti]).dot(C_set[i])
+
+        J_node = J_node.reshape((self.T, self.D_latent, self.D_latent))
+        return J_node, h_node
+
+    @property
+    def _info_emission_params_dense(self):
+        T, D_latent = self.T, self.D_latent
+        data, inputs, mask = self.data, self.inputs, self.mask
+
+        Cs, Ds, Rs = self.Cs, self.Ds, self.sigma_obss
+        Rinvs = [np.linang.inv(R) for R in Rs]
+
+        # Sloowwwwww
+        J_node = np.zeros((T, D_latent, D_latent))
+        h_node = np.zeros((T, D_latent, D_latent))
+        for t in range(T):
+            z = self.stateseq[t]
+            Rinv_t = Rinvs[z] * np.outer(mask[t], mask[t])
+            J_node[t] = Cs[z].T.dot(Rinv_t).dot(Cs[z])
+            h_node[t] = (data[t] - inputs[t].dot(Ds[z].T)).dot(Rinv_t).dot(Cs[z])
+
+        J_node = J_node.reshape((self.T, self.D_latent, self.D_latent))
         return J_node, h_node
 
     @property
     def extra_info_params(self):
         params = super(_SLDSStatesMaskedData, self).extra_info_params
 
-        # Mask off missing data entries -- should work?
+        # TODO: Mask off missing data entries -- might not work?
         if self.mask is not None:
             params = params[:-1] + (self.data * self.mask, )
 
@@ -708,12 +722,179 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
         self._mf_aBl = None  # TODO
 
+class _SLDSStatesCountData(_SLDSStatesGibbs):
+    def __init__(self, model, data=None, mask=None, fixed_stateseq=None, **kwargs):
+        super(_SLDSStatesCountData, self). \
+            __init__(model, data=data, mask=mask,
+                     fixed_stateseq=fixed_stateseq, **kwargs)
+
+        # Check if the emission matrix is a count regression
+        if isinstance(self.emission_distns[0], _PGLogisticRegressionBase):
+            self.has_count_data = True
+
+            # Initialize the Polya-gamma samplers
+            num_threads = ppg.get_omp_num_threads()
+            seeds = np.random.randint(2 ** 16, size=num_threads)
+            self.ppgs = [ppg.PyPolyaGamma(seed) for seed in seeds]
+
+            # Initialize auxiliary variables, omega
+            self.omega = np.ones((self.T, self.D_emission), dtype=np.float)
+        else:
+            self.has_count_data = False
+
+    @property
+    def sigma_obss(self):
+        if self.has_count_data:
+            raise Exception("Count data does not have sigma_obs")
+        return super(_SLDSStatesCountData, self).sigma_obss
+
+    @property
+    def info_emission_params(self):
+        if not self.has_count_data:
+            return super(_SLDSStatesCountData, self).info_emission_params
+
+        # Otherwise, use the Polya-gamma augmentation
+        # log p(y_{tn} | x, om)
+        #   = -0.5 * om_{tn} * (c_n^T x_t + d_n^T u_t + b_n)**2
+        #     + kappa * (c_n * x_t + d_n^Tu_t + b_n)
+        #   = -0.5 * om_{tn} * (x_t^T c_n c_n^T x_t
+        #                       + 2 x_t^T c_n d_n^T u_t
+        #                       + 2 x_t^T c_n b_n)
+        #     + x_t^T (kappa_{tn} * c_n)
+        #   = -0.5 x_t^T (c_n c_n^T * om_{tn}) x_t
+        #     +  x_t^T * (kappa_{tn} - d_n^T u_t * om_{tn} -b_n * om_{tn}) * c_n
+        #
+        # Thus
+        # J = (om * mask).dot(CCT)
+        # h = ((kappa - om * d) * mask).dot(C)
+        T, D_latent, D_emission = self.T, self.D_latent, self.D_emission
+        data, inputs, mask, omega = self.data, self.inputs, self.mask, self.omega
+        if self.model._single_emission:
+            emission_distn = self.emission_distns[0]
+            C = emission_distn.A[:, :D_latent]
+            D = emission_distn.A[:,D_latent:]
+            b = emission_distn.b
+            CCT = np.array([np.outer(cp, cp) for cp in C]).\
+                reshape((D_emission, D_latent ** 2))
+
+            J_node = np.dot(omega * mask, CCT)
+            J_node = J_node.reshape((T, D_latent, D_latent))
+
+            kappa = emission_distn.kappa_func(data)
+            h_node = ((kappa - omega * b.T - omega * inputs.dot(D.T)) * mask).dot(C)
+
+        else:
+            C_set = [d.A[:,:self.D_latent] for d in self.emission_distns]
+            D_set = [d.A[:,self.D_latent:] for d in self.emission_distns]
+            b_set = [d.b for d in self.emission_distns]
+            CCT_set = [np.array([np.outer(cp, cp) for cp in C]).
+                           reshape((self.D_emission, self.D_latent**2))
+                       for C in C_set]
+
+            J_node = np.zeros((self.T, self.D_latent**2))
+            h_node = np.zeros((self.T, self.D_latent))
+
+            for i in range(len(self.emission_distns)):
+                ti = np.where(self.stateseq == i)[0]
+                J_obs = omega[ti] * mask[ti]
+                kappa = self.emission_distns[i].kappa_func(data[ti])
+
+                J_node[ti] = np.dot(J_obs, CCT_set[i])
+
+                h_node[ti] = ((kappa
+                               - omega[ti] * b_set[i].T
+                               - omega * inputs[ti].dot(D_set[i].T)
+                               ) * mask[ti]).dot(C_set[i])
+
+        return J_node, h_node
+
+    @property
+    def extra_info_params(self):
+        if not self.has_count_data:
+            return super(_SLDSStatesCountData, self).extra_info_params
+
+        J_init = np.linalg.inv(self.sigma_init)
+        h_init = np.linalg.solve(self.sigma_init, self.mu_init)
+
+        Q_set = [d.sigma for d in self.dynamics_distns]
+        logdet_pairs = [-np.linalg.slogdet(Q)[1] for Q in Q_set]
+
+        expand = lambda a: a[None, ...]
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
+        logdet_pairs = stack_set(logdet_pairs)[self.stateseq]
+
+        # TODO: Observations
+        J_yy = np.zeros((self.D_emission, self.D_emission))
+        logdet_node = np.zeros((self.T))
+
+        return J_init, h_init, logdet_pairs, J_yy, logdet_node, self.data * self.mask
+
+    @staticmethod
+    def empirical_rate(data, sigma=3.0):
+        """
+        Smooth X to get an empirical rate
+        """
+        from scipy.ndimage.filters import gaussian_filter1d
+        return 0.001 + gaussian_filter1d(data.astype(np.float), sigma, axis=0)
+
+    def resample(self, niter=1):
+        niter = self.niter if hasattr(self, 'niter') else niter
+        for itr in range(niter):
+            self.resample_discrete_states()
+            self.resample_gaussian_states()
+
+            if self.has_count_data:
+                self.resample_auxiliary_variables()
+
+    def resample_auxiliary_variables(self):
+        if self.model._single_emission:
+            ed = self.emission_distns[0]
+            C, D = ed.A[:, :self.D_latent], ed.A[:, self.D_latent:]
+            psi = self.gaussian_states.dot(C.T) + self.inputs.dot(D.T) + ed.b.T
+            b = ed.b_func(self.data)
+        else:
+            C_set = [d.A[:, :self.D_latent] for d in self.emission_distns]
+            D_set = [d.A[:, self.D_latent:] for d in self.emission_distns]
+            b_set = [d.b for d in self.emission_distns]
+
+            psi = np.zeros((self.T, self.D_emission))
+            b = np.zeros((self.T, self.D_emission))
+
+            for i in range(len(self.emission_distns)):
+                ti = np.where(self.stateseq == i)[0]
+                psi[ti] = self.gaussian_states[ti].dot(C_set[i].T)
+                psi[ti] += self.inputs[ti].dot(D_set[i].T)
+                psi[ti] += b_set[i].T
+
+                b[ti] = self.emission_distns[i].b_func(self.data[ti])
+
+        ppg.pgdrawvpar(self.ppgs, b.ravel(), psi.ravel(), self.omega.ravel())
+
+    def smooth(self):
+        if not self.has_count_data:
+            return super(_SLDSStatesCountData, self).smooth()
+
+        X = np.column_stack((self.gaussian_states, self.inputs))
+        if self.model._single_emission:
+            ed = self.emission_distns[0]
+            mean = ed.mean(X)
+
+        else:
+            mean = np.zeros((self.T, self.D_emission))
+            for i, ed in enumerate(self.emission_distns):
+                ed = self.emission_distns[i]
+                ti = np.where(self.stateseq == i)[0]
+                mean[ti] = ed.mean(X[ti])
+
+        return mean
+
 
 ####################
 #  states classes  #
 ####################
 
 class HMMSLDSStatesPython(
+    _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
     _SLDSStatesMeanField,
@@ -722,6 +903,7 @@ class HMMSLDSStatesPython(
 
 
 class HMMSLDSStatesEigen(
+    _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
     _SLDSStatesMeanField,
@@ -730,6 +912,7 @@ class HMMSLDSStatesEigen(
 
 
 class HSMMSLDSStatesPython(
+    _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
     _SLDSStatesMeanField,
@@ -738,6 +921,7 @@ class HSMMSLDSStatesPython(
 
 
 class HSMMSLDSStatesEigen(
+    _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
     _SLDSStatesMeanField,
@@ -746,6 +930,7 @@ class HSMMSLDSStatesEigen(
 
 
 class GeoHSMMSLDSStates(
+    _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
     _SLDSStatesMeanField,
