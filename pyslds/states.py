@@ -164,7 +164,12 @@ class _SLDSStates(object):
     def info_init_params(self):
         J_init = np.linalg.inv(self.sigma_init)
         h_init = np.linalg.solve(self.sigma_init, self.mu_init)
-        return J_init, h_init
+
+        log_Z_init = -1. / 2 * h_init.dot(np.linalg.solve(J_init, h_init))
+        log_Z_init += 1. / 2 * np.linalg.slogdet(J_init)[1]
+        log_Z_init -= self.D_latent / 2. * np.log(2 * np.pi)
+
+        return J_init, h_init, log_Z_init
 
     @property
     def info_dynamics_params(self):
@@ -195,7 +200,21 @@ class _SLDSStates(object):
         h_pair_1 = np.einsum('ni,nij->nj', self.inputs, h_pair_1)
         h_pair_2 = np.einsum('ni,nij->nj', self.inputs, h_pair_2)
 
-        return J_pair_11, J_pair_21, J_pair_22, h_pair_1, h_pair_2
+        # Compute the log normalizer
+        log_Z_pair = -self.D_latent / 2. * np.log(2 * np.pi) * np.ones(self.T-1)
+
+        logdet = [np.linalg.slogdet(Q)[1] for Q in Q_set]
+        logdet = stack_set(logdet)[self.stateseq[:-1]]
+        log_Z_pair += -1. / 2 * logdet
+
+        hJh_pair = [B.T.dot(np.linalg.solve(Q, B)) for B, Q in zip(B_set, Q_set)]
+        hJh_pair = stack_set(hJh_pair)[self.stateseq[:-1]]
+        log_Z_pair -= 1. / 2 * np.einsum('tij,ti,tj->t',
+                                         hJh_pair,
+                                         self.inputs[:-1],
+                                         self.inputs[:-1])
+
+        return J_pair_11, J_pair_21, J_pair_22, h_pair_1, h_pair_2, log_Z_pair
 
     @property
     def info_emission_params(self):
@@ -203,60 +222,64 @@ class _SLDSStates(object):
         expand = lambda a: a[None,...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-        # TODO: Double check this
         # TODO: Check for diagonal emissions
         C_set = [d.A[:,:self.D_latent] for d in self.emission_distns]
         D_set = [d.A[:,self.D_latent:] for d in self.emission_distns]
         R_set = [d.sigma for d in self.emission_distns]
-        RC_set = [np.linalg.solve(R, C) for C,R in zip(C_set, R_set)]
-        CRC_set = [C.T.dot(RC) for C,RC in zip(C_set, RC_set)]
-        DRC_set = [D.T.dot(RC) for D,RC in zip(D_set, RC_set)]
+        Ri_set = [np.linalg.inv(R) for R in R_set]
+        RiC_set = [Ri.dot(C) for C,Ri in zip(C_set, Ri_set)]
+        RiD_set = [Ri.dot(D) for D,Ri in zip(D_set, Ri_set)]
+        CRiC_set = [C.T.dot(RiC) for C,RiC in zip(C_set, RiC_set)]
+        DRiC_set = [D.T.dot(RiC) for D,RiC in zip(D_set, RiC_set)]
+        DRiD_set = [D.T.dot(RiD) for D,RiD in zip(D_set, RiD_set)]
 
-        J_node = stack_set(CRC_set)[self.stateseq]
+        # TODO: Faster to replace this with a loop over t?
+        Ri = stack_set(Ri_set)[self.stateseq]
+        RiC = stack_set(RiC_set)[self.stateseq]
+        RiD = stack_set(RiD_set)[self.stateseq]
+        DRiC = stack_set(DRiC_set)[self.stateseq]
+        DRiD = stack_set(DRiD_set)[self.stateseq]
 
-        # TODO: Faster to replace this with a loop?
+        J_node = stack_set(CRiC_set)[self.stateseq]
+
         # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
-        RC = stack_set(RC_set)[self.stateseq]
-        DRC = stack_set(DRC_set)[self.stateseq]
-        h_node = np.einsum('ni,nij->nj', self.data, RC)
-        h_node -= np.einsum('ni,nij->nj', self.inputs, DRC)
+        h_node = np.einsum('ni,nij->nj', self.data, RiC)
+        h_node -= np.einsum('ni,nij->nj', self.inputs, DRiC)
 
-        return J_node, h_node
+
+        log_Z_node = -self.D_emission / 2. * np.log(2 * np.pi) * np.ones(self.T)
+
+        logdet = [np.linalg.slogdet(R)[1] for R in R_set]
+        logdet = stack_set(logdet)[self.stateseq]
+        log_Z_node += -1. / 2 * logdet
+
+        # E[(y-Du)^T R^{-1} (y-Du)]
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', Ri,
+                                         self.data, self.data)
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', -2 * RiD,
+                                         self.data, self.inputs)
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', DRiD,
+                                         self.inputs, self.inputs)
+
+        # Observations
+        # if self.diagonal_noise:
+        #     # Use the fact that the diagonalregression prior is factorized
+        #     rsq_set = [d.sigmasq_flat for d in self.emission_distns]
+        #     rsq = stack_set(rsq_set)[self.stateseq]
+        #
+        #     J_yy = 1./rsq
+        #     logdet_node = -np.sum(np.log(rsq), axis=1)
+        #
+        #     # We need terms for u_t D^T R^{-1} D u
+        #     hJh_node_set = [D.T.dot(np.diag(1./r)).dot(D) for D, r in zip(D_set, rsq_set)]
+        #     hJh_nodes = stack_set(hJh_node_set)[self.stateseq]
+
+
+        return J_node, h_node, log_Z_node
 
     @property
     def info_params(self):
         return self.info_init_params + self.info_dynamics_params + self.info_emission_params
-
-    @property
-    def extra_info_params(self):
-        J_init = np.linalg.inv(self.sigma_init)
-        h_init = np.linalg.solve(self.sigma_init, self.mu_init)
-
-        Q_set = [d.sigma for d in self.dynamics_distns]
-        logdet_pairs = [-np.linalg.slogdet(Q)[1] for Q in Q_set]
-
-        expand = lambda a: a[None, ...]
-        stack_set = lambda x: np.concatenate(list(map(expand, x)))
-        logdet_pairs = stack_set(logdet_pairs)[self.stateseq]
-
-        # Observations
-        if self.diagonal_noise:
-            # Use the fact that the diagonalregression prior is factorized
-            rsq_set = [d.sigmasq_flat for d in self.emission_distns]
-            rsq = stack_set(rsq_set)[self.stateseq]
-
-            J_yy = 1./rsq
-            logdet_node = -np.sum(np.log(rsq), axis=1)
-
-        else:
-            R_set = [d.sigma for d in self.emission_distns]
-            R_inv_set = [np.linalg.inv(R) for R in R_set]
-            R_logdet_set = [-np.linalg.slogdet(R)[1] for R in R_set]
-
-            J_yy = stack_set(R_inv_set)[self.stateseq]
-            logdet_node = stack_set(R_logdet_set)[self.stateseq]
-
-        return J_init, h_init, logdet_pairs, J_yy, logdet_node, self.data
 
     def smooth(self):
         # Use the info E step because it can take advantage of diagonal noise
@@ -273,10 +296,6 @@ class _SLDSStates(object):
         self.smoothed_sigmas, E_xtp1_xtT = \
             info_E_step(*self.info_params)
 
-        self._gaussian_normalizer += LDSStates._info_extra_loglike_terms(
-            *self.extra_info_params,
-            isdiag=self.diagonal_noise)
-        #
         # self._set_expected_stats(
         #     self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
 
@@ -301,8 +320,7 @@ class _SLDSStatesGibbs(_SLDSStates):
         self._aBl = None  # clear any caching
         self._gaussian_normalizer, self.gaussian_states = \
             info_sample(*self.info_params)
-        self._gaussian_normalizer += LDSStates._info_extra_loglike_terms(
-            *self.extra_info_params, isdiag=self.diagonal_noise)
+
 
 class _SLDSStatesMeanField(_SLDSStates):
     @property
@@ -321,12 +339,18 @@ class _SLDSStatesMeanField(_SLDSStates):
         E_AT_Qinv = J_pair_21[:,:n,:]
         E_BT_Qinv = J_pair_21[:,n:,:]
         E_BT_Qinv_A = J_pair_11[:,n:,:n]
+        E_BT_Qinv_B = J_pair_11[:,n:,n:]
         E_AT_Qinv_A = J_pair_11[:,:n,:n].copy("C")
 
-        h_pair_1 = -np.einsum('ni,nij->nj', self.inputs, E_BT_Qinv_A)
-        h_pair_2 = np.einsum('ni,nij->nj', self.inputs, E_BT_Qinv)
+        h_pair_1 = -np.einsum('ti,tij->tj', self.inputs, E_BT_Qinv_A)
+        h_pair_2 = np.einsum('ti,tij->tj', self.inputs, E_BT_Qinv)
 
-        return E_AT_Qinv_A, -E_AT_Qinv, E_Qinv, h_pair_1, h_pair_2
+        log_Z_pair = 1./2 * logdet_pair[:-1]
+        log_Z_pair -= self.D_latent / 2. * np.log(2 * np.pi)
+        log_Z_pair -= 1. / 2 * np.einsum('tij,ti,tj->t', E_BT_Qinv_B[:-1],
+                                         self.inputs[:-1], self.inputs[:-1])
+
+        return E_AT_Qinv_A, -E_AT_Qinv, E_Qinv, h_pair_1, h_pair_2, log_Z_pair
 
     @property
     def expected_info_emission_params(self):
@@ -339,14 +363,29 @@ class _SLDSStatesMeanField(_SLDSStates):
         J_yy, J_yx, J_node, logdet_node = get_paramseq(self.emission_distns)
 
         n = self.D_latent
-        E_Rinv_C = J_yx[:,:n].copy("C")
+        E_Rinv = J_yy
+        E_Rinv_C = J_yx[:,:,:n].copy("C")
+        E_Rinv_D = J_yx[:,:,n:].copy("C")
         E_DT_Rinv_C = J_node[:,n:,:n]
         E_CT_Rinv_C = J_node[:,:n,:n].copy("C")
+        E_DT_Rinv_D = J_node[:,n:,n:]
 
         h_node = np.einsum('ni,nij->nj', self.data, E_Rinv_C)
         h_node -= np.einsum('ni,nij->nj', self.inputs, E_DT_Rinv_C)
 
-        return E_CT_Rinv_C, h_node
+        log_Z_node = -self.D_emission / 2. * np.log(2 * np.pi) * np.ones(self.T)
+        log_Z_node += 1. / 2 * logdet_node
+
+        # E[(y-Du)^T R^{-1} (y-Du)]
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', E_Rinv,
+                                         self.data, self.data)
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', -2*E_Rinv_D,
+                                         self.data, self.inputs)
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', E_DT_Rinv_D,
+                                         self.inputs, self.inputs)
+
+
+        return E_CT_Rinv_C, h_node, log_Z_node
 
     @property
     def expected_info_params(self):
@@ -424,9 +463,6 @@ class _SLDSStatesMeanField(_SLDSStates):
     def meanfield_update_gaussian_states(self):
         self._mf_lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, \
             E_xtp1_xtT = info_E_step(*self.expected_info_params)
-
-        self._mf_lds_normalizer += LDSStates._info_extra_loglike_terms(
-            *self.expected_extra_info_params, isdiag=self.diagonal_noise)
 
         self._set_gaussian_expected_stats(
             self.smoothed_mus,self.smoothed_sigmas,E_xtp1_xtT)
@@ -531,19 +567,25 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
     @property
     def _info_emission_params_diag(self):
         if self.model._single_emission:
-            sigmasq = self.emission_distns[0].sigmasq_flat
-            J_obs = self.mask / sigmasq
 
             C = self.emission_distns[0].A[:,:self.D_latent]
             D = self.emission_distns[0].A[:,self.D_latent:]
             CCT = np.array([np.outer(cp, cp) for cp in C]).\
                 reshape((self.D_emission, self.D_latent ** 2))
 
+            sigmasq = self.emission_distns[0].sigmasq_flat
+            J_obs = self.mask / sigmasq
+            centered_data = self.data - self.inputs.dot(D.T)
+
             J_node = np.dot(J_obs, CCT)
+
             # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
-            h_node = (self.data * J_obs).dot(C)
-            if self.D_input > 0:
-                h_node -= (self.inputs.dot(D.T) * J_obs).dot(C)
+            h_node = (centered_data * J_obs).dot(C)
+
+            log_Z_node = -self.mask.sum(1) / 2. * np.log(2 * np.pi)
+            log_Z_node -= 1. / 2 * np.sum(self.mask * np.log(sigmasq), axis=1)
+            log_Z_node -= 1. / 2 * np.sum(centered_data ** 2 * J_obs, axis=1)
+
 
         else:
             expand = lambda a: a[None, ...]
@@ -561,19 +603,24 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
             J_node = np.zeros((self.T, self.D_latent**2))
             h_node = np.zeros((self.T, self.D_latent))
+            log_Z_node = -self.mask.sum(1) / 2. * np.log(2 * np.pi) * np.ones(self.T)
 
             for i in range(len(self.emission_distns)):
                 ti = np.where(self.stateseq == i)[0]
+                centered_data_i = self.data[ti] - self.inputs[ti].dot(D_set[i].T)
+
                 J_node[ti] = np.dot(J_obs[ti], CCT_set[i])
-                h_node[ti] = (self.data[ti] * J_obs[ti]).dot(C_set[i])
-                if self.D_input > 0:
-                    h_node[ti] -= (self.inputs[ti].dot(D_set[i].T) * J_obs[ti]).dot(C_set[i])
+                h_node[ti] = (centered_data_i * J_obs[ti]).dot(C_set[i])
+
+                log_Z_node[ti] -= 1. / 2 * np.sum(np.log(sigmasq_set[i]))
+                log_Z_node[ti] -= 1. / 2 * np.sum(centered_data_i ** 2 * J_obs[ti], axis=1)
 
         J_node = J_node.reshape((self.T, self.D_latent, self.D_latent))
-        return J_node, h_node
+        return J_node, h_node, log_Z_node
 
     @property
     def _info_emission_params_dense(self):
+        raise NotImplementedError
         T, D_latent = self.T, self.D_latent
         data, inputs, mask = self.data, self.inputs, self.mask
 
@@ -591,16 +638,6 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
         J_node = J_node.reshape((self.T, self.D_latent, self.D_latent))
         return J_node, h_node
-
-    @property
-    def extra_info_params(self):
-        params = super(_SLDSStatesMaskedData, self).extra_info_params
-
-        # TODO: Mask off missing data entries -- might not work?
-        if self.mask is not None:
-            params = params[:-1] + (self.data * self.mask, )
-
-        return params
 
     @property
     def expected_info_emission_params(self):
@@ -637,16 +674,6 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
             raise NotImplementedError("Only supporting diagonal regression class right now")
 
         return J_node, h_node
-
-    @property
-    def expected_extra_info_params(self):
-        params = super(_SLDSStatesMaskedData, self).expected_extra_info_params
-
-        # Mask off missing data entries -- should work?
-        if self.mask is not None:
-            params = params[:-1] + (self.data * self.mask, )
-
-        return params
 
     @property
     def aBl(self):
@@ -806,28 +833,10 @@ class _SLDSStatesCountData(_SLDSStatesGibbs):
                                - omega * inputs[ti].dot(D_set[i].T)
                                ) * mask[ti]).dot(C_set[i])
 
-        return J_node, h_node
+        # See pylds/states.py for info on the log normalizer
+        # terms for Polya-gamma augmented states
 
-    @property
-    def extra_info_params(self):
-        if not self.has_count_data:
-            return super(_SLDSStatesCountData, self).extra_info_params
-
-        J_init = np.linalg.inv(self.sigma_init)
-        h_init = np.linalg.solve(self.sigma_init, self.mu_init)
-
-        Q_set = [d.sigma for d in self.dynamics_distns]
-        logdet_pairs = [-np.linalg.slogdet(Q)[1] for Q in Q_set]
-
-        expand = lambda a: a[None, ...]
-        stack_set = lambda x: np.concatenate(list(map(expand, x)))
-        logdet_pairs = stack_set(logdet_pairs)[self.stateseq]
-
-        # TODO: Observations
-        J_yy = np.zeros((self.D_emission, self.D_emission))
-        logdet_node = np.zeros((self.T))
-
-        return J_init, h_init, logdet_pairs, J_yy, logdet_node, self.data * self.mask
+        return J_node, h_node, np.zeros(self.T)
 
     @property
     def expected_info_emission_params(self):
@@ -836,12 +845,24 @@ class _SLDSStatesCountData(_SLDSStatesGibbs):
 
         return super(_SLDSStatesCountData, self).expected_info_emission_params
 
-    @property
-    def expected_extra_info_params(self):
+    def log_likelihood(self):
         if self.has_count_data:
-            raise NotImplementedError("Mean field with count observations is not yet supported")
 
-        return super(_SLDSStatesCountData, self).expected_extra_info_params
+            if self.model._single_emission:
+                ll = self.emission_distns[0].log_likelihood(
+                    (np.hstack((self.gaussian_states, self.inputs)),
+                     self.data), mask=self.mask).sum()
+            else:
+                ll = 0
+                z, xs, u, y = self.stateseq, self.gaussian_states, self.inputs, self.data
+                for k, ed in enumerate(self.emission_distns):
+                    xuk = np.hstack((xs[z==k], u[z==k]))
+                    yk = y[z==k]
+                    ll += ed.log_likelihood((xuk, yk), mask=self.mask).sum()
+            return ll
+
+        else:
+            return super(_SLDSStatesCountData, self).log_likelihood()
 
     @staticmethod
     def empirical_rate(data, sigma=3.0):

@@ -79,8 +79,14 @@ model.states_list[0]._init_mf_from_gibbs()
 # plt.figure()
 # plt.plot([model.meanfield_coordinate_descent_step() for _ in progprint_xrange(50)])
 
+vlbs = []
 for _ in progprint_xrange(50):
-    model.meanfield_coordinate_descent_step(compute_vlb=False)
+    vlbs.append(model.meanfield_coordinate_descent_step())
+
+plt.figure()
+plt.plot(vlbs)
+plt.xlabel("Iteration")
+plt.ylabel("VLB")
 
 import matplotlib.gridspec as gridspec
 fig = plt.figure(figsize=(9,3))
