@@ -3,10 +3,12 @@ import numpy as np
 from functools import partial
 from builtins import zip
 
-from pybasicbayes.distributions.regression import DiagonalRegression
+from pybasicbayes.distributions import DiagonalRegression, Gaussian, Regression
 
 import pyhsmm
 from pyhsmm.util.general import list_split
+
+from pylds.util import random_rotation
 
 from pyslds.states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, \
     HSMMSLDSStatesEigen
@@ -33,6 +35,15 @@ class _SLDSMixin(object):
         super(_SLDSMixin,self).__init__(
             obs_distns=self.dynamics_distns,**kwargs)
 
+    def generate(self, T=100, keep=True, **kwargs):
+        s = self._states_class(model=self, T=T, initialize_from_prior=True, **kwargs)
+        s.generate_states()
+        data = self._generate_obs(s)
+        if keep:
+            self.states_list.append(s)
+        return data + (s.stateseq,)
+
+
     def _generate_obs(self,s):
         if s.data is None:
             s.data = s.generate_obs()
@@ -41,6 +52,11 @@ class _SLDSMixin(object):
             raise NotImplementedError
 
         return s.data, s.gaussian_states
+
+    def smooth(self, data, inputs=None, mask=None):
+        self.add_data(data, inputs=inputs, mask=mask)
+        s = self.states_list.pop()
+        return s.smooth()
 
     @property
     def diagonal_noise(self):
@@ -258,3 +274,150 @@ class WeakLimitStickyHDPHMMSLDS(
 
 class WeakLimitHDPHSMMSLDS(_SLDSGibbsMixin, pyhsmm.models.WeakLimitHDPHSMM):
     _states_class = HSMMSLDSStatesEigen
+
+
+## Default constructors
+
+def _default_model(model_class, K, D_obs, D_latent, D_input=0,
+                   mu_inits=None, sigma_inits=None,
+                   As=None, Bs=None, sigma_statess=None,
+                   Cs=None, Ds=None, sigma_obss=None,
+                   alpha=3.0, init_state_distn='uniform',
+                   **kwargs):
+
+    # Initialize init_dynamics_distns
+    init_dynamics_distns = \
+        [Gaussian(nu_0=D_latent+3,
+                  sigma_0=3.*np.eye(D_latent),
+                  mu_0=np.zeros(D_latent),
+                  kappa_0=0.01)
+         for _ in range(K)]
+
+    if mu_inits is not None:
+        assert isinstance(mu_inits, list) and len(mu_inits) == K
+        for id, mu in zip(init_dynamics_distns, mu_inits):
+            id.mu = mu
+
+    if sigma_inits is not None:
+        assert isinstance(sigma_inits, list) and len(sigma_inits) == K
+        for id, sigma in zip(init_dynamics_distns, sigma_inits):
+            id.sigma = sigma
+
+    # Initialize dynamics distributions
+    dynamics_distns = [Regression(
+        nu_0=D_latent + 1,
+        S_0=D_latent * np.eye(D_latent),
+        M_0=np.zeros((D_latent, D_latent + D_input)),
+        K_0=D_latent * np.eye(D_latent + D_input))
+        for _ in range(K)]
+    if As is not None:
+        assert isinstance(As, list) and len(As) == K
+        if D_input > 0:
+            assert isinstance(Bs, list) and len(Bs) == K
+            As = [np.hstack((A, B)) for A,B in zip(As, Bs)]
+    else:
+        # As = [random_rotation(D_latent) for _ in range(K)]
+        As = [np.eye(D_latent) for _ in range(K)]
+        if D_input > 0:
+            As = [np.hstack((A, np.zeros((D_latent, D_input))))
+                  for A in As]
+    for dd, A in zip(dynamics_distns, As):
+        dd.A = A
+
+    if sigma_statess is not None:
+        assert isinstance(sigma_statess, list) and len(sigma_statess) == K
+    else:
+        sigma_statess = [np.eye(D_latent) for _ in range(K)]
+
+    for dd, sigma in zip(dynamics_distns, sigma_statess):
+        dd.sigma = sigma
+
+    # Initialize emission distributions
+    _single_emission = (Cs is not None) and (not isinstance(Cs, list))
+
+    if _single_emission:
+        if D_input > 0:
+            assert Ds is not None and not isinstance(Ds, list)
+            Cs = np.hstack((Cs, Ds))
+
+        if sigma_obss is None:
+            sigma_obss = np.eye(D_obs)
+
+        emission_distns = Regression(
+            nu_0=D_obs + 3,
+            S_0=D_obs * np.eye(D_obs),
+            M_0=np.zeros((D_obs, D_latent + D_input)),
+            K_0=D_obs * np.eye(D_latent + D_input),
+            A=Cs, sigma=sigma_obss)
+
+    else:
+        emission_distns = [Regression(
+            nu_0=D_obs + 1,
+            S_0=D_obs * np.eye(D_obs),
+            M_0=np.zeros((D_obs, D_latent + D_input)),
+            K_0=D_obs * np.eye(D_latent + D_input))
+            for _ in range(K)]
+
+        if Cs is not None and sigma_obss is not None:
+            assert isinstance(Cs, list) and len(Cs) == K
+            assert isinstance(sigma_obss, list) and len(sigma_obss) == K
+            if D_input > 0:
+                assert isinstance(Ds, list) and len(Ds) == K
+                Cs = [np.hstack((C, D)) for C,D in zip(Cs, Ds)]
+        else:
+            Cs = [np.zeros((D_obs, D_latent + D_input)) for _ in range(K)]
+            sigma_obss = [0.05 * np.eye(D_obs) for _ in range(K)]
+
+        for ed, C, sigma in zip(emission_distns, Cs, sigma_obss):
+            ed.A = C
+            ed.sigma = sigma
+
+    model = model_class(
+        init_dynamics_distns=init_dynamics_distns,
+        dynamics_distns=dynamics_distns,
+        emission_distns=emission_distns,
+        init_state_distn=init_state_distn,
+        alpha=alpha,
+        **kwargs)
+
+    return model
+
+def DefaultSLDS(K, D_obs, D_latent, D_input=0,
+                mu_inits=None, sigma_inits=None,
+                As=None, Bs=None, sigma_statess=None,
+                Cs=None, Ds=None, sigma_obss=None,
+                alpha=3.,
+                **kwargs):
+    return _default_model(HMMSLDS, K, D_obs, D_latent, D_input=D_input,
+                          mu_inits=mu_inits, sigma_inits=sigma_inits,
+                          As=As, Bs=Bs, sigma_statess=sigma_statess,
+                          Cs=Cs, Ds=Ds, sigma_obss=sigma_obss,
+                          alpha=alpha,
+                          **kwargs)
+
+
+def DefaultWeakLimitHDPSLDS(K, D_obs, D_latent, D_input=0,
+                mu_inits=None, sigma_inits=None,
+                As=None, Bs=None, sigma_statess=None,
+                Cs=None, Ds=None, sigma_obss=None,
+                alpha=3., gamma=3.,
+                **kwargs):
+    return _default_model(WeakLimitHDPHMMSLDS, K, D_obs, D_latent, D_input=D_input,
+                          mu_inits=mu_inits, sigma_inits=sigma_inits,
+                          As=As, Bs=Bs, sigma_statess=sigma_statess,
+                          Cs=Cs, Ds=Ds, sigma_obss=sigma_obss,
+                          alpha=alpha, gamma=gamma,
+                          **kwargs)
+
+def DefaultWeakLimitStickyHDPSLDS(K, D_obs, D_latent, D_input=0,
+                mu_inits=None, sigma_inits=None,
+                As=None, Bs=None, sigma_statess=None,
+                Cs=None, Ds=None, sigma_obss=None,
+                alpha=3., gamma=3., kappa=10.,
+                **kwargs):
+    return _default_model(WeakLimitStickyHDPHMMSLDS, K, D_obs, D_latent, D_input=D_input,
+                          mu_inits=mu_inits, sigma_inits=sigma_inits,
+                          As=As, Bs=Bs, sigma_statess=sigma_statess,
+                          Cs=Cs, Ds=Ds, sigma_obss=sigma_obss,
+                          kappa=kappa, alpha=alpha, gamma=gamma,
+                          **kwargs)

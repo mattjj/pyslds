@@ -2,11 +2,11 @@ from __future__ import division
 import numpy as np
 import matplotlib.pyplot as plt
 
-from pyhsmm.basic.distributions import Regression, Gaussian, PoissonDuration
+from pyhsmm.basic.distributions import PoissonDuration
 from autoregressive.distributions import AutoRegression
 from pyhsmm.util.text import progprint_xrange
 
-from pyslds.models import HMMSLDS
+from pyslds.models import DefaultSLDS
 
 np.random.seed(0)
 
@@ -38,35 +38,20 @@ plt.plot(data[:,0],data[:,1],'bx-')
 #  build model  #
 #################
 
-Nmax = 10
-P = 2
-D = data.shape[1]
+Kmax = 10                           # number of latent discrete states
+D_latent = 2                        # latent linear dynamics' dimension
+D_obs = 2                           # data dimension
 
-dynamics_distns = [
-    Regression(
-        A=np.eye(P),sigma=np.eye(P),
-        nu_0=3,S_0=3.*np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
-    for _ in range(Nmax)]
+Cs = [np.eye(D_obs) for _ in range(Kmax)]                   # Shared emission matrices
+sigma_obss = [0.05 * np.eye(D_obs) for _ in range(Kmax)]    # Emission noise covariances
 
-emission_distns = [
-    Regression(
-        A=np.eye(D),sigma=0.05*np.eye(D),
-        nu_0=5.,S_0=np.eye(P),M_0=np.eye(P),K_0=10.*np.eye(P))
-    for _ in range(Nmax)]
-
-
-init_dynamics_distns = [
-    Gaussian(nu_0=4,sigma_0=4.*np.eye(P),mu_0=np.zeros(P),kappa_0=0.1)
-    for _ in range(Nmax)]
-
-model = HMMSLDS(
-    dynamics_distns=dynamics_distns,
-    emission_distns=emission_distns,
-    init_dynamics_distns=init_dynamics_distns,
-    alpha=3.,init_state_distn='uniform')
+model = DefaultSLDS(
+    K=Kmax, D_obs=D_obs, D_latent=D_latent,
+    Cs=Cs, sigma_obss=sigma_obss)
 
 model.add_data(data)
 model.resample_states()
+
 for _ in progprint_xrange(10):
     model.resample_model()
 model.states_list[0]._init_mf_from_gibbs()
@@ -75,9 +60,6 @@ model.states_list[0]._init_mf_from_gibbs()
 ####################
 #  run mean field  #
 ####################
-
-# plt.figure()
-# plt.plot([model.meanfield_coordinate_descent_step() for _ in progprint_xrange(50)])
 
 vlbs = []
 for _ in progprint_xrange(50):
@@ -97,7 +79,7 @@ ax3 = fig.add_subplot(gs[-1], sharex=ax1)
 
 im = ax1.matshow(model.states_list[0].expected_states.T, aspect='auto')
 ax1.set_xticks([])
-ax1.set_yticks(np.arange(Nmax))
+ax1.set_yticks(np.arange(Kmax))
 ax1.set_ylabel("Discrete State")
 
 ax2.matshow(model.states_list[0].expected_states.argmax(1)[None,:], aspect='auto')
