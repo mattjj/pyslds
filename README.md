@@ -29,7 +29,7 @@ one time step, we first sample the next discrete state, then we use
 the linear dynamics associated with that discrete state to update the
 continuous state. This is summarized with the following dynamics equations:
 
-![Math](aux/model.png)
+<img src="aux/model.png" alt="Math" width="400">
 
 # Example
 PySLDS exposes a variety of classes for working with linear
