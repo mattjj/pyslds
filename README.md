@@ -24,12 +24,20 @@ is to model the data, `y_t`, as a linear projection of a
 low-dimensional latent state, `x_t`. Moreover, these continuous latent
 states co-evolve alongside a discrete latent state, `z_t`.  The
 instantaneous discrete state indexes into a set of linear dynamics
-matrices. That is, in order to propagate the continuous state forward
+parameters. That is, in order to propagate the continuous state forward
 one time step, we first sample the next discrete state, then we use
 the linear dynamics associated with that discrete state to update the
 continuous state. This is summarized with the following dynamics equations:
 
-<img src="aux/model.png" alt="Math" width="400">
+<p align="center">
+<img src="aux/model.png" alt="Math" width="300">
+</p>
+
+Here, `A_k`, `Q_k`, `C_k`, and `R_k` are matrices associated 
+with discrete state `z_t = k`, and `b_k` and `d_k` are vector
+biases associated with these states.  While the dynamics are 
+conditionally linear given the discrete latent state, the composition
+of many linear systems is highly nonlinear.
 
 # Example
 PySLDS exposes a variety of classes for working with linear
