@@ -29,8 +29,8 @@ from pyslds.models import DefaultSLDS
 K = 5               # Number of discrete latent states
 D_obs = 1           # Observed data dimension
 D_latent = 2	    # Latent state dimension
-D_input = 0	    # Exogenous input dimension
-T = 2000  	    # Number of time steps to simulate
+D_input = 0	        # Exogenous input dimension
+T = 2000  	        # Number of time steps to simulate
 
 true_model = DefaultSLDS(K, D_obs, D_latent, D_input)
 inputs = npr.randn(T, D_input)
@@ -54,7 +54,7 @@ test_model = DefaultSLDS(K, D_obs, D_latent, D_input)
 test_model.add_data(y)
 
 # Run the Gibbs sampler
-N_samples = 100
+N_samples = 1000
 def update(model):
     model.resample_model()
     return model.log_likelihood()
@@ -92,7 +92,7 @@ plt.legend(loc="upper center", ncol=2)
 
 ![Smoothed Data](aux/demo_smooth.png)
 
-This is based on the [simple demo](/example/simple_demo.py) in the
+This is based on the [simple demo](/examples/simple_demo.py) in the
 the [examples](/examples) directory. Check out that folder for demos of other
 types of inference, as well as examples of how to work with count
 data and missing observations. 
