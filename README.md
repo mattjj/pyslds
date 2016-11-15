@@ -29,8 +29,8 @@ from pyslds.models import DefaultSLDS
 K = 5               # Number of discrete latent states
 D_obs = 1           # Observed data dimension
 D_latent = 2	    # Latent state dimension
-D_input = 0	    # Exogenous input dimension
-T = 2000  	    # Number of time steps to simulate
+D_input = 0	        # Exogenous input dimension
+T = 2000  	        # Number of time steps to simulate
 
 true_model = DefaultSLDS(K, D_obs, D_latent, D_input)
 inputs = npr.randn(T, D_input)
