@@ -54,7 +54,7 @@ test_model = DefaultSLDS(K, D_obs, D_latent, D_input)
 test_model.add_data(y)
 
 # Run the Gibbs sampler
-N_samples = 100
+N_samples = 1000
 def update(model):
     model.resample_model()
     return model.log_likelihood()
@@ -92,7 +92,7 @@ plt.legend(loc="upper center", ncol=2)
 
 ![Smoothed Data](aux/demo_smooth.png)
 
-This is based on the [simple demo](/example/simple_demo.py) in the
+This is based on the [simple demo](/examples/simple_demo.py) in the
 the [examples](/examples) directory. Check out that folder for demos of other
 types of inference, as well as examples of how to work with count
 data and missing observations. 
