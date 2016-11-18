@@ -8,7 +8,8 @@ model = None
 args = None
 
 def _get_sampled_stateseq(idx):
-    def resample_states((data, kwargs)):
+    def resample_states(data_and_kwargs):
+        data, kwargs = data_and_kwargs
         model.add_data(data, **kwargs)
         s = model.states_list.pop()
         s.resample()
