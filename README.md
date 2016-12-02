@@ -13,8 +13,8 @@ These inference algorithms all benefit from the fast message passing
 code developed in PyLDS.
 
 ```
-git clone git@github.com:mattjj/pyhsmm-slds.git
-cd pyshmm-slds
+git clone git@github.com:mattjj/pyslds.git
+cd pyslds
 pip install -e .
 ```
 
@@ -121,8 +121,8 @@ data and missing observations.
 # Installation
 To install `pyslds` from source, first clone the repo
 
-    git clone git@github.com:mattjj/pyhsmm-slds.git
-    cd pyhsmm-slds
+    git clone git@github.com:mattjj/pyslds.git
+    cd pyslds
 
 Then install in developer mode:
 
