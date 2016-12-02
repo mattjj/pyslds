@@ -5,7 +5,7 @@ setup(
     version='0.0.2',
     author='Matthew J Johnson and Scott W Linderman',
     author_email='mattjj@csail.mit.edu',
-    url='https://github.com/mattjj/pyhsmm-slds',
+    url='https://github.com/mattjj/pyslds',
     packages=['pyslds'],
     install_requires=[
         'numpy', 'scipy', 'matplotlib',
