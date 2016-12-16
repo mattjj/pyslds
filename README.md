@@ -18,7 +18,8 @@ cd pyslds
 pip install -e .
 ```
 
-# Background Switching linear dynamical systems (SLDS) are powerful
+# Background
+Switching linear dynamical systems (SLDS) are powerful
 models for approximating nonlinear dynamical systems. The basic idea
 is to model the data, `y_t`, as a linear projection of a
 low-dimensional latent state, `x_t`. Moreover, these continuous latent
