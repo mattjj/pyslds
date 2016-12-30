@@ -10,4 +10,5 @@ setup(
     install_requires=[
         'numpy', 'scipy', 'matplotlib',
         'pybasicbayes', 'pyhsmm', 'pylds',
+        'pypolyagamma>=1.1'
     ])

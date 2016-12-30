@@ -9,7 +9,7 @@ We support inference via blocked Gibbs sampling, structured mean field, and expe
 maximization (EM) for either linear Gaussian or, using
 [pypolyagamma](https://github.com/slinderman/pypolyagamma), count observations.
 The inference algorithms use fast message passing implementations and count
-observation models additionally use the Pólya-gamma augmentation for inference.
+observation models additionally use the Pólya-gamma augmentation.
 
 ## Installing with pip
 
@@ -19,19 +19,16 @@ To install pyslds, just run
 pip install pyslds
 ```
 
-To support efficient inference with count observations, you'll also need to install
-install [pypolyagamma](https://github.com/slinderman/pypolyagamma) with
-
-```
-pip install pypolyagamma
-```
+To enable OpenMP support in
+[pypolyagamma](https://github.com/slinderman/pypolyagamma), you might want to
+install it separately following their [installation instructions for OpenMP
+support](https://github.com/slinderman/pypolyagamma#parallel-sampling-with-openmp).
 
 ## Installing from git source
 
 ```
 git clone git@github.com:mattjj/pyslds.git
 pip install -e pyslds
-pip install pypolyagamma  # optional
 ```
 
 # Background
