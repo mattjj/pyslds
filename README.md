@@ -1,21 +1,37 @@
 # PySLDS: Bayesian inference for switching linear dynamical systems
-_Authors: Matt Johnson and Scott Linderman_
+_Authors: [Matt Johnson](https://github.com/mattjj)
+and [Scott Linderman](https://github.com/slinderman)_
 
-This package combines [pyhsmm](https://github.com/mattjj/pyhsmm)
-and [pylds](https://github.com/mattjj/pylds) to provide simple
-interfaces for learning and inference in switching linear dynamical
-systems. We support inference via Gibbs sampling,
-structured mean field, and expectation maximization (EM) for
-dynamical systems with linear Gaussian state dynamics and
-either linear Gaussian or count observations. Count data can be
-handled via Pólya-gamma augmentation of the data. 
-These inference algorithms all benefit from the fast message passing
-code developed in PyLDS.
+This package combines [pyhsmm](https://github.com/mattjj/pyhsmm) and
+[pylds](https://github.com/mattjj/pylds) to provide simple interfaces for
+learning and inference in switching linear dynamical systems (SLDS).
+We support inference via blocked Gibbs sampling, structured mean field, and expectation
+maximization (EM) for either linear Gaussian or, using
+[pypolyagamma](https://github.com/slinderman/pypolyagamma), count observations.
+The inference algorithms use fast message passing implementations and count
+observation models additionally use the Pólya-gamma augmentation for inference.
+
+## Installing with pip
+
+To install pyslds, just run
+
+```
+pip install pyslds
+```
+
+To support efficient inference with count observations, you'll also need to install
+install [pypolyagamma](https://github.com/slinderman/pypolyagamma) with
+
+```
+pip install pypolyagamma
+```
+
+## Installing from git source
 
 ```
 git clone git@github.com:mattjj/pyslds.git
-cd pyslds
-pip install -e .
+pip install -e pyslds
+pip install pypolyagamma  # optional
 ```
 
 # Background
@@ -50,9 +66,9 @@ from pyslds.models import DefaultSLDS
 
 K = 5               # Number of discrete latent states
 D_obs = 1           # Observed data dimension
-D_latent = 2	    # Latent state dimension
-D_input = 0	        # Exogenous input dimension
-T = 2000  	        # Number of time steps to simulate
+D_latent = 2        # Latent state dimension
+D_input = 0         # Exogenous input dimension
+T = 2000            # Number of time steps to simulate
 
 true_model = DefaultSLDS(K, D_obs, D_latent, D_input)
 inputs = npr.randn(T, D_input)
@@ -114,22 +130,7 @@ plt.legend(loc="upper center", ncol=2)
 
 ![Smoothed Data](aux/demo_smooth.png)
 
-This is based on the [simple demo](/examples/simple_demo.py) in the
-the [examples](/examples) directory. Check out that folder for demos of other
-types of inference, as well as examples of how to work with count
-data and missing observations. 
-
-# Installation
-To install `pyslds` from source, first clone the repo
-
-    git clone git@github.com:mattjj/pyslds.git
-    cd pyslds
-
-Then install in developer mode:
-
-    pip install -e .
-
-Or use the standard install:
-
-    python setup.py install
-
+This is based on the [simple demo](/examples/simple_demo.py) in the the
+[examples](/examples) directory.
+Check out that folder for demos of other types of inference, as well as
+examples of how to work with count data and missing observations.
