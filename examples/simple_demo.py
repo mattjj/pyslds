@@ -23,7 +23,7 @@ from pybasicbayes.util.text import progprint_xrange
 from pylds.util import random_rotation
 from pyslds.models import DefaultSLDS, DefaultWeakLimitStickyHDPSLDS
 
-npr.seed(3)
+npr.seed(0)
 
 # Set parameters
 K = 5

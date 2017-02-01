@@ -2,6 +2,7 @@ from __future__ import division
 import numpy as np
 from functools import partial
 
+from pybasicbayes.util.general import objarray
 from pybasicbayes.util.stats import mniw_expectedstats
 
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
@@ -42,6 +43,8 @@ class _SLDSStates(object):
 
         elif stateseq is not None:
             self.stateseq = np.array(stateseq,dtype=np.int32)
+            self.generate_gaussian_states()
+
         elif generate:
             if data is not None and not initialize_from_prior:
                 self.resample()
@@ -323,6 +326,11 @@ class _SLDSStatesGibbs(_SLDSStates):
 
 
 class _SLDSStatesMeanField(_SLDSStates):
+    def __init__(self, model, **kwargs):
+        super(_SLDSStatesMeanField, self).__init__(model, **kwargs)
+        self.smoothed_mus = np.zeros((self.T, self.D_latent))
+        self.smoothed_sigmas = np.tile(np.eye(self.D_latent)[None, :, :], (self.T, self.D_latent))
+
     @property
     def expected_info_dynamics_params(self):
         def get_paramseq(distns):
@@ -394,47 +402,19 @@ class _SLDSStatesMeanField(_SLDSStates):
                self.expected_info_emission_params
 
     @property
-    def expected_extra_info_params(self):
-        J_init = np.linalg.inv(self.sigma_init)
-        h_init = np.linalg.solve(self.sigma_init, self.mu_init)
-
-        def get_paramseq(distns):
-            contract = partial(np.tensordot, self.expected_states, axes=1)
-            std_param = lambda d: d._natural_to_standard(d.mf_natural_hypparam)
-            params = [mniw_expectedstats(*std_param(d)) for d in distns]
-            return list(map(contract, zip(*params)))
-
-        expand = lambda a: a[None, ...]
-        stack_set = lambda x: np.concatenate(list(map(expand, x)))
-
-        _, _, _, logdet_pairs = \
-            get_paramseq(self.dynamics_distns)
-
-        # Observations
-        if self.diagonal_noise:
-            E_sigmasq_inv_set = [d.mf_expectations[2] for d in self.emission_distns]
-            J_yy = self.expected_states.dot(stack_set(E_sigmasq_inv_set))
-
-            E_logdet_sigma_set = [-np.sum(d.mf_expectations[3]) for d in self.emission_distns]
-            logdet_node = self.expected_states.dot(stack_set(E_logdet_sigma_set))
-
-        else:
-            J_yy, _, _, logdet_node = get_paramseq(self.emission_distns)
-
-        return J_init, h_init, logdet_pairs, J_yy, logdet_node, self.data
-
-
-    @property
     def mf_aBl(self):
+        """
+        These are the expected log likelihoods (node potentials)
+        as seen from the discrete states.
+        """
         if self._mf_aBl is None:
             mf_aBl = self._mf_aBl = np.zeros((self.T, self.num_states))
             ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
                 self.emission_distns
 
-            # TODO: Update with inputs
             for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
                 mf_aBl[0,idx] = d1.expected_log_likelihood(
-                    stats=(self.smoothed_mus[0], self.ExxT[0], 1.))
+                    stats=self.E_init_stats)
                 mf_aBl[:-1,idx] += d2.expected_log_likelihood(
                     stats=self.E_dynamics_stats)
                 mf_aBl[:,idx] += d3.expected_log_likelihood(
@@ -468,38 +448,48 @@ class _SLDSStatesMeanField(_SLDSStates):
             self.smoothed_mus,self.smoothed_sigmas,E_xtp1_xtT)
 
     def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
-        # TODO: Handle inputs
-
         assert not np.isnan(E_xtp1_xtT).any()
         assert not np.isnan(smoothed_mus).any()
         assert not np.isnan(smoothed_sigmas).any()
 
-        # this is like LDSStates._set_expected_states but doesn't sum over time
+        # This is like LDSStates._set_expected_states but doesn't sum over time
         T = self.T
-        ExxT = self.ExxT = smoothed_sigmas \
-                           + self.smoothed_mus[:, :, None] * self.smoothed_mus[:, None, :]
+        E_x_xT = smoothed_sigmas + self.smoothed_mus[:, :, None] * self.smoothed_mus[:, None, :]
+        E_x_uT = smoothed_mus[:, :, None] * self.inputs[:, None, :]
+        E_u_uT = self.inputs[:, :, None] * self.inputs[:, None, :]
+
+        E_xu_xuT = np.concatenate((
+            np.concatenate((E_x_xT, E_x_uT), axis=2),
+            np.concatenate((np.transpose(E_x_uT, (0, 2, 1)), E_u_uT), axis=2)),
+            axis=1)
+
+        E_xut_xutT = E_xu_xuT[:-1]
+
+        E_xtp1_xtp1T = E_x_xT[1:]
+        E_xtp1_xtT = E_xtp1_xtT
+
+        E_xtp1_utT = (smoothed_mus[1:, :, None] * self.inputs[:-1, None, :])
+        E_xtp1_xutT = np.concatenate((E_xtp1_xtT, E_xtp1_utT), axis=-1)
 
         # Initial state stats
-        self.E_init_stats = (self.smoothed_mus[0], ExxT[0], 1.)
+        self.E_init_stats = (self.smoothed_mus[0], E_x_xT[0], 1.)
 
         # Dynamics stats
         # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
         # TODO only compute EyyT once
-        E_xtp1_xtp1T = self.E_xtp1_xtp1T = ExxT[1:]
-        E_xt_xtT = self.E_xt_xtT = ExxT[:-1]
-
-        self.E_dynamics_stats = \
-            (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T-1))
+        # E_xtp1_xtp1T = self.E_xtp1_xtp1T = E_xu_xuT[1:]
+        # E_xt_xtT = self.E_xt_xtT = E_xu_xuT[:-1]
+        #
+        # self.E_dynamics_stats = \
+        #     (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T-1))
+        self.E_dynamics_stats = (E_xtp1_xtp1T, E_xtp1_xutT, E_xut_xutT, np.ones(self.T-1))
 
         # Emission stats
-        if self.diagonal_noise:
-            EyyT = self.EyyT = self.data**2
-            EyxT = self.EyxT = self.data[:, :, None] * self.smoothed_mus[:, None, :]
-            self.E_emission_stats = (EyyT, EyxT, ExxT, np.ones(T))
-        else:
-            EyyT = self.EyyT = self.data[:, :, None] * self.data[:, None, :]
-            EyxT = self.EyxT = self.data[:, :, None] * self.smoothed_mus[:, None, :]
-            self.E_emission_stats = (EyyT, EyxT, ExxT, np.ones(T))
+        E_yyT = self.data**2 if self.diagonal_noise else self.data[:, :, None] * self.data[:, None, :]
+        E_yxT = self.data[:, :, None] * self.smoothed_mus[:, None, :]
+        E_yuT = self.data[:, :, None] * self.inputs[:, None, :]
+        E_yxuT = np.concatenate((E_yxT, E_yuT), axis=-1)
+        self.E_emission_stats = (E_yyT, E_yxuT, E_xu_xuT, np.ones(T))
 
 
     def get_vlb(self, most_recently_updated=False):
@@ -533,12 +523,14 @@ class _SLDSStatesMeanField(_SLDSStates):
 
 
 class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
-    def __init__(self, model, T=None, data=None, inputs=None, mask=None, stateseq=None, gaussian_states=None,
-                 generate=True, initialize_from_prior=True, fixed_stateseq=None):
+    def __init__(self, model, data=None, mask=None, **kwargs):
         if mask is not None:
-            assert mask.shape == data.shape
+            # assert mask.shape == data.shape
             self.mask = mask
-        elif data is not None and np.any(np.isnan(data)):
+        elif data is not None and \
+             isinstance(data, np.ndarray) \
+             and np.any(np.isnan(data)):
+
             from warnings import warn
             warn("data includes NaN's. Treating these as missing data.")
             self.mask = ~np.isnan(data)
@@ -548,11 +540,7 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
         else:
             self.mask = None
 
-        super(_SLDSStatesMaskedData, self).__init__(model, T=T, data=data, inputs=inputs,
-                                                    stateseq=stateseq, gaussian_states=gaussian_states,
-                                                    generate=generate,
-                                                    initialize_from_prior=initialize_from_prior,
-                                                    fixed_stateseq=fixed_stateseq)
+        super(_SLDSStatesMaskedData, self).__init__(model, data=data, **kwargs)
 
     @property
     def info_emission_params(self):
@@ -641,11 +629,11 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
     @property
     def expected_info_emission_params(self):
-        if self.D_input > 0:
-            raise NotImplementedError("Inputs and missing data is not yet supported!")
-
         if self.mask is None:
             return super(_SLDSStatesMaskedData, self).expected_info_emission_params
+
+        if self.D_input > 0:
+            raise NotImplementedError("Inputs and missing data is not yet supported!")
 
         if self.diagonal_noise:
             expand = lambda a: a[None, ...]
@@ -722,17 +710,32 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
         # Same as in parent class
         # this is like LDSStates._set_expected_states but doesn't sum over time
         T = self.T
-        ExxT = self.ExxT = smoothed_sigmas \
+        E_x_xT = self.ExxT = smoothed_sigmas \
                            + self.smoothed_mus[:, :, None] * self.smoothed_mus[:, None, :]
 
+        E_x_uT = smoothed_mus[:, :, None] * self.inputs[:, None, :]
+        E_u_uT = self.inputs[:, :, None] * self.inputs[:, None, :]
+
+        E_xu_xuT = np.concatenate((
+            np.concatenate((E_x_xT, E_x_uT), axis=2),
+            np.concatenate((np.transpose(E_x_uT, (0, 2, 1)), E_u_uT), axis=2)),
+            axis=1)
+        E_xut_xutT = E_xu_xuT[:-1].sum(0)
+
+        E_xtp1_xtp1T = E_x_xT[1:].sum(0)
+        E_xtp1_xtT = E_xtp1_xtT.sum(0)
+
+        E_xtp1_utT = (smoothed_mus[1:, :, None] * inputs[:-1, None, :]).sum(0)
+        E_xtp1_xutT = np.hstack((E_xtp1_xtT, E_xtp1_utT))
+
         # Initial state stats
-        self.E_init_stats = (self.smoothed_mus[0], ExxT[0], 1.)
+        self.E_init_stats = (self.smoothed_mus[0], E_x_xT[0], 1.)
 
         # Dynamics stats
-        # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
-        # TODO only compute EyyT once
-        E_xtp1_xtp1T = self.E_xtp1_xtp1T = ExxT[1:]
-        E_xt_xtT = self.E_xt_xtT = ExxT[:-1]
+        # # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
+        # # TODO only compute EyyT once
+        # E_xtp1_xtp1T = self.E_xtp1_xtp1T = ExxT[1:]
+        # E_xt_xtT = self.E_xt_xtT = ExxT[:-1]
 
         self.E_dynamics_stats = \
             (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T - 1))
@@ -749,11 +752,11 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
         self._mf_aBl = None  # TODO
 
+
 class _SLDSStatesCountData(_SLDSStatesGibbs):
-    def __init__(self, model, data=None, mask=None, fixed_stateseq=None, **kwargs):
+    def __init__(self, model, data=None, mask=None, **kwargs):
         super(_SLDSStatesCountData, self). \
-            __init__(model, data=data, mask=mask,
-                     fixed_stateseq=fixed_stateseq, **kwargs)
+            __init__(model, data=data, mask=mask, **kwargs)
 
         # Check if the emission matrix is a count regression
         if isinstance(self.emission_distns[0], _PGLogisticRegressionBase):
