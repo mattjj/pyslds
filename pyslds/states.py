@@ -344,21 +344,21 @@ class _SLDSStatesMeanField(_SLDSStates):
         # Compute E[B^T Q^{-1}] and E[B^T Q^{-1} A]
         n = self.D_latent
         E_Qinv = J_pair_22
-        E_AT_Qinv = J_pair_21[:,:n,:]
-        E_BT_Qinv = J_pair_21[:,n:,:]
+        E_Qinv_A = J_pair_21[:,:,:n]
+        E_Qinv_B = J_pair_21[:,:,n:]
         E_BT_Qinv_A = J_pair_11[:,n:,:n]
         E_BT_Qinv_B = J_pair_11[:,n:,n:]
         E_AT_Qinv_A = J_pair_11[:,:n,:n].copy("C")
 
         h_pair_1 = -np.einsum('ti,tij->tj', self.inputs, E_BT_Qinv_A)
-        h_pair_2 = np.einsum('ti,tij->tj', self.inputs, E_BT_Qinv)
+        h_pair_2 = np.einsum('ti,tji->tj', self.inputs, E_Qinv_B)
 
         log_Z_pair = 1./2 * logdet_pair[:-1]
         log_Z_pair -= self.D_latent / 2. * np.log(2 * np.pi)
         log_Z_pair -= 1. / 2 * np.einsum('tij,ti,tj->t', E_BT_Qinv_B[:-1],
                                          self.inputs[:-1], self.inputs[:-1])
 
-        return E_AT_Qinv_A, -E_AT_Qinv, E_Qinv, h_pair_1, h_pair_2, log_Z_pair
+        return E_AT_Qinv_A, -E_Qinv_A, E_Qinv, h_pair_1, h_pair_2, log_Z_pair
 
     @property
     def expected_info_emission_params(self):
@@ -435,7 +435,14 @@ class _SLDSStatesMeanField(_SLDSStates):
         # Base class sets the expected HMM stats
         # the first meanfield step will update the HMM params accordingly
         super(_SLDSStatesMeanField, self)._init_mf_from_gibbs()
-        self.meanfield_update_gaussian_states()
+
+        self._mf_lds_normalizer = 0
+        self.smoothed_mus = self.gaussian_states.copy()
+        self.smoothed_sigmas = np.tile(0.01 * np.eye(self.D_latent)[None, :, :], (self.T, 1, 1))
+        E_xtp1_xtT = self.smoothed_mus[1:,:,None] * self.smoothed_mus[:-1,None,:]
+
+        self._set_gaussian_expected_stats(
+            self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
 
     def meanfield_update_discrete_states(self):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
