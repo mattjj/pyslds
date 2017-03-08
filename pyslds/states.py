@@ -639,36 +639,29 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
         if self.mask is None:
             return super(_SLDSStatesMaskedData, self).expected_info_emission_params
 
-        if self.D_input > 0:
-            raise NotImplementedError("Inputs and missing data is not yet supported!")
-
-        if self.diagonal_noise:
-            expand = lambda a: a[None, ...]
-            stack_set = lambda x: np.concatenate(list(map(expand, x)))
-
-            # E_C, E_CCT, E_sigmasq_inv, _ = self.emission_distn.mf_expectations
-            mf_params = [d.mf_expectations for d in self.emission_distns]
-
-            E_C_set = [prms[0] for prms in mf_params]
-            E_CCT_set = [np.reshape(prms[1], (self.D_emission, self.D_latent ** 2))
-                       for prms in mf_params]
-            E_sigmasq_inv_set = [prms[2] for prms in mf_params]
-
-            E_sigmasq_inv = stack_set(E_sigmasq_inv_set)[self.stateseq]
+        if self.model._single_emission:
+            # TODO: Fix this! It should use expectations of CDT
+            E_CD, E_CDCDT, E_sigmasq_inv, E_log_sigmasq = self.model.emission_distns[0].mf_expectations
+            E_C, E_D = E_CD[:, :self.D_latent], E_CD[:, self.D_latent:]
+            E_CCT = E_CDCDT[:,:self.D_latent, :self.D_latent]
+            E_CDT = E_CDCDT[:,:self.D_latent, self.D_latent:]
             J_obs = self.mask * E_sigmasq_inv
 
-            J_node = np.zeros((self.T, self.D_latent**2))
-            h_node = np.zeros((self.T, self.D_latent))
-            for i in range(len(self.emission_distns)):
-                J_node += self.expected_states[:,i][:,None] * np.dot(J_obs, E_CCT_set[i])
-                h_node += self.expected_states[:,i][:,None] * (self.data * J_obs).dot(E_C_set[i])
+            centered_data = self.data - self.inputs.dot(E_D.T)
 
-            J_node = J_node.reshape((self.T, self.D_latent, self.D_latent))
+            J_node = np.dot(J_obs, E_CCT.reshape((-1, self.D_latent**2))).reshape((-1, self.D_latent, self.D_latent))
+
+            # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
+            h_node = (centered_data * J_obs).dot(E_C)
+
+            log_Z_node = -self.mask.sum(1) / 2. * np.log(2 * np.pi)
+            log_Z_node -= 1. / 2 * np.sum(self.mask * E_log_sigmasq, axis=1)
+            log_Z_node -= 1. / 2 * np.sum(centered_data ** 2 * J_obs, axis=1)
 
         else:
             raise NotImplementedError("Only supporting diagonal regression class right now")
 
-        return J_node, h_node
+        return J_node, h_node, log_Z_node
 
     @property
     def aBl(self):
@@ -716,10 +709,54 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
 
         # Same as in parent class
         # this is like LDSStates._set_expected_states but doesn't sum over time
-        T = self.T
-        E_x_xT = self.ExxT = smoothed_sigmas \
-                           + self.smoothed_mus[:, :, None] * self.smoothed_mus[:, None, :]
+        # T = self.T
+        # E_x_xT = self.ExxT = smoothed_sigmas \
+        #                    + self.smoothed_mus[:, :, None] * self.smoothed_mus[:, None, :]
+        #
+        # E_x_uT = smoothed_mus[:, :, None] * self.inputs[:, None, :]
+        # E_u_uT = self.inputs[:, :, None] * self.inputs[:, None, :]
+        #
+        # E_xu_xuT = np.concatenate((
+        #     np.concatenate((E_x_xT, E_x_uT), axis=2),
+        #     np.concatenate((np.transpose(E_x_uT, (0, 2, 1)), E_u_uT), axis=2)),
+        #     axis=1)
+        # E_xut_xutT = E_xu_xuT[:-1]
+        #
+        # E_xtp1_xtp1T = E_x_xT[1:]
+        # E_xtp1_xtT = E_xtp1_xtT
+        #
+        # E_xtp1_utT = (smoothed_mus[1:, :, None] * self.inputs[:-1, None, :]).sum(0)
+        # E_xtp1_xutT = np.hstack((E_xtp1_xtT, E_xtp1_utT))
+        #
+        # # Initial state stats
+        # self.E_init_stats = (self.smoothed_mus[0], E_x_xT[0], 1.)
+        #
+        # # Dynamics stats
+        # # # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
+        # # # TODO only compute EyyT once
+        # # E_xtp1_xtp1T = self.E_xtp1_xtp1T = ExxT[1:]
+        # # E_xt_xtT = self.E_xt_xtT = ExxT[:-1]
+        #
+        # self.E_dynamics_stats = \
+        #     (E_xtp1_xtp1T, E_xtp1_xtT, E_xut_xutT, np.ones(T - 1))
+        #
+        # # Emission stats
+        # masked_data = self.data * self.mask if self.mask is not None else self.data
+        # if self.diagonal_noise:
+        #     E_ysq = self.EyyT = masked_data ** 2
+        #     E_yxT = self.EyxT = masked_data[:, :, None] * self.smoothed_mus[:, None, :]
+        #     E_yuT = masked_data[:, :, None] * self.inputs[:, None, :]
+        #     E_yxuT = np.concatenate((E_yxT, E_yuT), axis=-1)
+        #     E_xu_xuT = self.mask[:,:,None,None] * E_xu_xuT[:,None,:,:]
+        #
+        #     # Emission stats
+        #     self.E_emission_stats = (E_ysq, E_yxuT, E_xu_xuT, self.mask)
+        #
+        #     self.E_emission_stats = (Eysq, EyxT, ExxT, self.mask)
 
+        # This is like LDSStates._set_expected_states but doesn't sum over time
+        T = self.T
+        E_x_xT = smoothed_sigmas + self.smoothed_mus[:, :, None] * self.smoothed_mus[:, None, :]
         E_x_uT = smoothed_mus[:, :, None] * self.inputs[:, None, :]
         E_u_uT = self.inputs[:, :, None] * self.inputs[:, None, :]
 
@@ -727,33 +764,37 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
             np.concatenate((E_x_xT, E_x_uT), axis=2),
             np.concatenate((np.transpose(E_x_uT, (0, 2, 1)), E_u_uT), axis=2)),
             axis=1)
-        E_xut_xutT = E_xu_xuT[:-1].sum(0)
 
-        E_xtp1_xtp1T = E_x_xT[1:].sum(0)
-        E_xtp1_xtT = E_xtp1_xtT.sum(0)
+        E_xut_xutT = E_xu_xuT[:-1]
 
-        E_xtp1_utT = (smoothed_mus[1:, :, None] * inputs[:-1, None, :]).sum(0)
-        E_xtp1_xutT = np.hstack((E_xtp1_xtT, E_xtp1_utT))
+        E_xtp1_xtp1T = E_x_xT[1:]
+        E_xtp1_xtT = E_xtp1_xtT
+
+        E_xtp1_utT = (smoothed_mus[1:, :, None] * self.inputs[:-1, None, :])
+        E_xtp1_xutT = np.concatenate((E_xtp1_xtT, E_xtp1_utT), axis=-1)
 
         # Initial state stats
         self.E_init_stats = (self.smoothed_mus[0], E_x_xT[0], 1.)
 
         # Dynamics stats
-        # # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
-        # # TODO only compute EyyT once
-        # E_xtp1_xtp1T = self.E_xtp1_xtp1T = ExxT[1:]
-        # E_xt_xtT = self.E_xt_xtT = ExxT[:-1]
-
-        self.E_dynamics_stats = \
-            (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T - 1))
+        # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
+        # TODO only compute EyyT once
+        # E_xtp1_xtp1T = self.E_xtp1_xtp1T = E_xu_xuT[1:]
+        # E_xt_xtT = self.E_xt_xtT = E_xu_xuT[:-1]
+        #
+        # self.E_dynamics_stats = \
+        #     (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T-1))
+        self.E_dynamics_stats = (E_xtp1_xtp1T, E_xtp1_xutT, E_xut_xutT, np.ones(self.T - 1))
 
         # Emission stats
         masked_data = self.data * self.mask if self.mask is not None else self.data
         if self.diagonal_noise:
-            Eysq = self.EyyT = masked_data ** 2
-            EyxT = self.EyxT = masked_data[:, :, None] * self.smoothed_mus[:, None, :]
-            ExxT = self.mask[:,:,None,None] * ExxT[:,None,:,:]
-            self.E_emission_stats = (Eysq, EyxT, ExxT, self.mask)
+            E_yyT = masked_data ** 2
+            E_yxT = masked_data[:, :, None] * self.smoothed_mus[:, None, :]
+            E_yuT = masked_data[:, :, None] * self.inputs[:, None, :]
+            E_yxuT = np.concatenate((E_yxT, E_yuT), axis=-1)
+            self.E_emission_stats = (E_yyT, E_yxuT, E_xu_xuT, self.mask)
+
         else:
             raise Exception("Only DiagonalRegression currently supports missing data")
 

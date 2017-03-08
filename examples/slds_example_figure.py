@@ -1,4 +1,3 @@
-import string
 import numpy as np
 np.random.seed(123)
 
@@ -11,16 +10,30 @@ matplotlib.rcParams.update({'font.sans-serif' : 'Helvetica',
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-
-from hips.plotting.layout import create_figure, create_axis_at_location
+import matplotlib.gridspec as gridspec
 
 import seaborn as sns
 sns.set(style="white")
 
-from palettable.colorbrewer.qualitative import Set1_9
-colors = Set1_9.mpl_colors
+color_names = ["red",
+               "windows blue",
+               "amber",
+               "faded green",
+               "dusty purple",
+               "orange",
+               "clay",
+               "pink",
+               "greyish",
+               "light cyan",
+               "steel blue",
+               "pastel purple",
+               "mint",
+               "salmon"]
 
-from pybasicbayes.distributions import AutoRegression, DiagonalRegression, Gaussian
+colors = sns.xkcd_palette(color_names)
+
+
+from pybasicbayes.distributions import Regression, DiagonalRegression, Gaussian
 
 from pyslds.models import HMMSLDS
 
@@ -63,8 +76,8 @@ def sample_slds_model():
     ###################
     #  generate data  #
     ###################
-    init_dynamics_distns = [Gaussian(mu=mu_init, sigma=sigma_init) for _ in xrange(K)]
-    dynamics_distns = [AutoRegression(A=A, sigma=0.01 * np.eye(D_latent)) for A in As]
+    init_dynamics_distns = [Gaussian(mu=mu_init, sigma=sigma_init) for _ in range(K)]
+    dynamics_distns = [Regression(A=A, sigma=0.01 * np.eye(D_latent)) for A in As]
     emission_distns = DiagonalRegression(D_obs, D_latent, A=C, sigmasq=sigma_obs)
 
     slds = HMMSLDS(
@@ -90,9 +103,10 @@ def sample_slds_model():
     return z,x,y,slds
 
 
-def draw_slds_figure(z, x, y, slds, filename="slds", saveargs=dict(dpi=300)):
-    fig = create_figure((5.5, 2.7))
-    ax = create_axis_at_location(fig, .75, .5, 4., 1.375)
+def draw_slds_figure(z, x, y):
+    fig = plt.figure(figsize=(5.5, 2.7))
+    gs = gridspec.GridSpec(5, 1)
+    ax = fig.add_subplot(gs[2:, 0])
     ylim = 1.1 * abs(y).max()
     ymax = ylim * (2*D_obs + 1)
     ymin = -ylim
@@ -112,7 +126,6 @@ def draw_slds_figure(z, x, y, slds, filename="slds", saveargs=dict(dpi=300)):
     for i in range(D_obs):
         ax.plot(np.arange(T), ylim * (2*i+1) + y[:,i], '-k', lw=1)
 
-    # ax.set_ylabel("observations")
     ax.set_xlim(0, T)
     ax.set_xlabel("time")
 
@@ -129,7 +142,7 @@ def draw_slds_figure(z, x, y, slds, filename="slds", saveargs=dict(dpi=300)):
     ax.set_ylabel("${\\mathbf{y}_t}$", rotation=0, verticalalignment='center')
 
     ## Plot the continuous latent state above that above
-    ax = create_axis_at_location(fig, .75, 2., 4., .25)
+    ax = fig.add_subplot(gs[1, 0])
     xlim = 1.1 * abs(x).max()
     for l, r in zip(left_cps, right_cps):
         ax.add_patch(
@@ -151,7 +164,7 @@ def draw_slds_figure(z, x, y, slds, filename="slds", saveargs=dict(dpi=300)):
     ax.set_ylabel("${\\mathbf{x}_t}$", rotation=0, verticalalignment='center')
 
     ## Now plot the latent state above that above
-    ax = create_axis_at_location(fig, .75, 2.375, 4., .25)
+    ax = fig.add_subplot(gs[0, 0])
     for l, r in zip(left_cps, right_cps):
         ax.add_patch(
             Rectangle([l, 0], r - l, 10,
@@ -171,10 +184,9 @@ def draw_slds_figure(z, x, y, slds, filename="slds", saveargs=dict(dpi=300)):
     ax.set_ylabel("${\\mathbf{z}_t}$", rotation=0, verticalalignment='center')
 
     # fig.savefig(filename + ".pdf")
-    fig.savefig(filename+".pdf", **saveargs)
-    fig.savefig(filename+".png", **saveargs)
+    # fig.savefig(filename+".pdf", **saveargs)
+    # fig.savefig(filename+".png", **saveargs)
 
-    # plt.close(fig)
     plt.show()
 
 
@@ -192,14 +204,12 @@ def plot_vector_field(k, A, b=None, n_pts=30, xmin=-5, xmax=5,
     d_xy = xy.dot(A.T) + b - xy
 
     # Make the plot
-    XY = map(np.squeeze, [XX, YY])
+    XY = list(map(np.squeeze, [XX, YY]))
     C = np.ones((n_pts ** 2, 1)) * np.array(colors[k])[None, :]
     C = np.hstack((C, 0.75 * np.ones((n_pts**2, 1))))
 
     fig = plt.figure(figsize=figsize)
-    # ax = fig.add_subplot(111, aspect=1.0)
-    width = min(*figsize) - .75
-    ax = create_axis_at_location(fig, .5, .5, width, width)
+    ax = fig.add_subplot(111, aspect=1.0)
     ax.quiver(XY[0], XY[1], d_xy[:,0], d_xy[:,1], color=C,
               scale=1.0, scale_units="inches",
               headwidth=5.,
@@ -213,10 +223,9 @@ def plot_vector_field(k, A, b=None, n_pts=30, xmin=-5, xmax=5,
     plt.tick_params(axis='both', labelsize=8)
 
     ax.set_title(title, fontsize=10)
-    # plt.tight_layout()
 
-    fig.savefig(filename.format(k+1) + ".pdf")
-    fig.savefig(filename.format(k+1) + ".png")
+    # fig.savefig(filename.format(k+1) + ".pdf")
+    # fig.savefig(filename.format(k+1) + ".png")
 
 if __name__ == "__main__":
     # Sample data
