@@ -3,7 +3,7 @@ import numpy as np
 np.random.seed(0)
 
 import matplotlib
-matplotlib.use("macosx")
+# matplotlib.use("macosx")  # might be necessary for animation to work
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
