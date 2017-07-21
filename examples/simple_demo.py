@@ -30,13 +30,13 @@ try:
     cmap = gradient_cmap(colors)
 except:
     from matplotlib.cm import get_cmap
-    colors = ['b', 'r', 'y', 'g']
+    colors = ['b', 'r', 'y', 'g', 'purple']
     cmap = get_cmap("jet")
 
 
 from pybasicbayes.util.text import progprint_xrange
 from pylds.util import random_rotation
-from pyslds.models import DefaultSLDS, DefaultWeakLimitStickyHDPSLDS
+from pyslds.models import DefaultSLDS
 
 npr.seed(0)
 
@@ -111,14 +111,14 @@ smoothed_data = test_model.smooth(y, inputs)
 fig = plt.figure(figsize=(5,3))
 gs = GridSpec(3, 1, height_ratios=[.1, .1, 1.0])
 ax = fig.add_subplot(gs[0,0])
-ax.imshow(true_model.states_list[0].stateseq[None,:], vmin=0, vmax=len(colors)-1,
+ax.imshow(true_model.states_list[0].stateseq[None,:], vmin=0, vmax=max(len(colors), true_model.num_states)-1,
           cmap=cmap, interpolation="nearest", aspect="auto")
 ax.set_xticklabels([])
 ax.set_yticks([])
 ax.set_title("True Discrete States")
 
 ax = fig.add_subplot(gs[1,0])
-ax.imshow(test_model.states_list[0].stateseq[None,:], vmin=0, vmax=len(colors)-1,
+ax.imshow(test_model.states_list[0].stateseq[None,:], vmin=0, vmax=max(len(colors), test_model.num_states)-1,
           cmap=cmap, interpolation="nearest", aspect="auto")
 ax.set_xticklabels([])
 ax.set_yticks([])
