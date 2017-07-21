@@ -32,8 +32,11 @@ class _SLDSMixin(object):
             obs_distns=self.dynamics_distns,**kwargs)
 
     def generate(self, T=100, keep=True, **kwargs):
-        s = self._states_class(model=self, T=T, initialize_from_prior=True, **kwargs)
-        s.generate_states()
+        s = self._states_class(model=self, T=T,
+                               generate=True,
+                               initialize_from_prior=True,
+                               **kwargs)
+
         data = self._generate_obs(s)
         if keep:
             self.states_list.append(s)
@@ -368,7 +371,7 @@ def _default_model(model_class, K, D_obs, D_latent, D_input=0,
     dynamics_distns = [Regression(
         nu_0=D_latent + 1,
         S_0=D_latent * np.eye(D_latent),
-        M_0=np.zeros((D_latent, D_latent + D_input)),
+        M_0=np.hstack((.99 * np.eye(D_latent), np.zeros((D_latent, D_input)))),
         K_0=D_latent * np.eye(D_latent + D_input))
         for _ in range(K)]
     if As is not None:

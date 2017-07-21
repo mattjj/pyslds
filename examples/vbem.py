@@ -1,6 +1,5 @@
 from __future__ import division
 import numpy as np
-np.seterr(divide="raise")
 import matplotlib.pyplot as plt
 
 from pyhsmm.basic.distributions import PoissonDuration
@@ -9,7 +8,7 @@ from pyhsmm.util.text import progprint_xrange
 
 from pyslds.models import DefaultSLDS
 
-# np.random.seed(0)
+np.random.seed(0)
 
 
 ###################
@@ -39,9 +38,10 @@ plt.plot(data[:,0],data[:,1],'bx-')
 #  build model  #
 #################
 
-Kmax = 10                           # number of latent discrete states
-D_latent = 2                        # latent linear dynamics' dimension
-D_obs = 2                           # data dimension
+Kmax = 10       # number of latent discrete states
+D_latent = 2    # latent linear dynamics' dimension
+D_obs = 2       # data dimension
+N_iter = 100    # number of VBEM iterations
 
 Cs = [np.eye(D_obs) for _ in range(Kmax)]                   # Shared emission matrices
 sigma_obss = [0.05 * np.eye(D_obs) for _ in range(Kmax)]    # Emission noise covariances
@@ -63,7 +63,7 @@ model.states_list[0]._init_mf_from_gibbs()
 ####################
 
 vlbs = []
-for _ in progprint_xrange(100):
+for _ in progprint_xrange(N_iter):
     model.VBEM_step()
     vlbs.append(model.VBEM_ELBO())
     if len(vlbs) > 1:
@@ -71,6 +71,7 @@ for _ in progprint_xrange(100):
 
 plt.figure()
 plt.plot(vlbs)
+# plt.plot([0, N_iter], truemodel.log_likelihood(data) * np.ones(2), '--k')
 plt.xlabel("Iteration")
 plt.ylabel("VLB")
 

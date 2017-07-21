@@ -286,11 +286,11 @@ class _SLDSStates(object):
         # Use the info E step because it can take advantage of diagonal noise
         # The standard E step could but we have not implemented it
         self.info_E_step()
+        xu = np.column_stack((self.smoothed_mus, self.inputs))
         if self.model._single_emission:
-            return self.smoothed_mus.dot(self.emission_distns[0].A.T)
+            return xu.dot(self.emission_distns[0].A.T)
         else:
-            # TODO: Improve this
-            return np.array([C.dot(mu) for C,mu in zip(self.Cs, self.smoothed_mus)])
+            return np.array([C.dot(x) for C, x in zip(self.Cs, xu)])
 
     def info_E_step(self):
         self._gaussian_normalizer, self.smoothed_mus, \
@@ -302,6 +302,7 @@ class _SLDSStates(object):
         # the first meanfield step will update the HMM params accordingly
         super(_SLDSStates, self)._init_mf_from_gibbs()
 
+        self._normalizer = None
         self._mf_lds_normalizer = 0
         self.smoothed_mus = self.gaussian_states.copy()
         self.smoothed_sigmas = np.tile(0.01 * np.eye(self.D_latent)[None, :, :], (self.T, 1, 1))
@@ -540,6 +541,9 @@ class _SLDSStatesVBEM(_SLDSStates):
         stats = info_E_step(*info_params)
         self._lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT = stats
         self._set_gaussian_expected_stats(self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
+
+        # Set the gaussian states to smoothed mus
+        self.gaussian_states = self.smoothed_mus
 
         # Compute the variational entropy
         # ve1 = lds_entropy(info_params, stats)
