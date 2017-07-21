@@ -2,15 +2,15 @@ from __future__ import division
 import numpy as np
 from functools import partial
 
-from pybasicbayes.util.general import objarray
-from pybasicbayes.util.stats import mniw_expectedstats
+from pyhsmm.models import HMM
 
 from pyhsmm.internals.hmm_states import HMMStatesPython, HMMStatesEigen
 from pyhsmm.internals.hsmm_states import HSMMStatesPython, HSMMStatesEigen, \
     GeoHSMMStates
 
-from pylds.states import LDSStates
 from pylds.lds_messages_interface import filter_and_sample, info_E_step, info_sample
+
+from pyslds.util import hmm_entropy, lds_entropy, expected_regression_log_prob, expected_gaussian_logprob, test_lds_entropy
 
 import pypolyagamma as ppg
 from pypolyagamma.distributions import _PGLogisticRegressionBase
@@ -176,6 +176,7 @@ class _SLDSStates(object):
 
     @property
     def info_dynamics_params(self):
+        z, u = self.stateseq[:-1], self.inputs[:-1]
         expand = lambda a: a[None,...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
@@ -189,33 +190,30 @@ class _SLDSStates(object):
         J_pair_21_set = [-J22.dot(A) for A,J22 in zip(A_set, J_pair_22_set)]
         J_pair_11_set = [A.T.dot(-J21) for A,J21 in zip(A_set, J_pair_21_set)]
 
-        J_pair_11 = stack_set(J_pair_11_set)[self.stateseq]
-        J_pair_21 = stack_set(J_pair_21_set)[self.stateseq]
-        J_pair_22 = stack_set(J_pair_22_set)[self.stateseq]
+        J_pair_11 = stack_set(J_pair_11_set)[z]
+        J_pair_21 = stack_set(J_pair_21_set)[z]
+        J_pair_22 = stack_set(J_pair_22_set)[z]
 
         # Check if diagonal and avoid inverting D_obs x D_obs matrix
         h_pair_1_set = [B.T.dot(J) for B, J in zip(B_set, J_pair_21_set)]
         h_pair_2_set = [B.T.dot(Qi) for B, Qi in zip(B_set, J_pair_22_set)]
 
-        h_pair_1 = stack_set(h_pair_1_set)[self.stateseq]
-        h_pair_2 = stack_set(h_pair_2_set)[self.stateseq]
+        h_pair_1 = stack_set(h_pair_1_set)[z]
+        h_pair_2 = stack_set(h_pair_2_set)[z]
 
-        h_pair_1 = np.einsum('ni,nij->nj', self.inputs, h_pair_1)
-        h_pair_2 = np.einsum('ni,nij->nj', self.inputs, h_pair_2)
+        h_pair_1 = np.einsum('ni,nij->nj', u, h_pair_1)
+        h_pair_2 = np.einsum('ni,nij->nj', u, h_pair_2)
 
         # Compute the log normalizer
         log_Z_pair = -self.D_latent / 2. * np.log(2 * np.pi) * np.ones(self.T-1)
 
         logdet = [np.linalg.slogdet(Q)[1] for Q in Q_set]
-        logdet = stack_set(logdet)[self.stateseq[:-1]]
+        logdet = stack_set(logdet)[z]
         log_Z_pair += -1. / 2 * logdet
 
         hJh_pair = [B.T.dot(np.linalg.solve(Q, B)) for B, Q in zip(B_set, Q_set)]
-        hJh_pair = stack_set(hJh_pair)[self.stateseq[:-1]]
-        log_Z_pair -= 1. / 2 * np.einsum('tij,ti,tj->t',
-                                         hJh_pair,
-                                         self.inputs[:-1],
-                                         self.inputs[:-1])
+        hJh_pair = stack_set(hJh_pair)[z]
+        log_Z_pair -= 1. / 2 * np.einsum('tij,ti,tj->t', hJh_pair, u, u)
 
         return J_pair_11, J_pair_21, J_pair_22, h_pair_1, h_pair_2, log_Z_pair
 
@@ -248,7 +246,6 @@ class _SLDSStates(object):
         # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
         h_node = np.einsum('ni,nij->nj', self.data, RiC)
         h_node -= np.einsum('ni,nij->nj', self.inputs, DRiC)
-
 
         log_Z_node = -self.D_emission / 2. * np.log(2 * np.pi) * np.ones(self.T)
 
@@ -284,6 +281,7 @@ class _SLDSStates(object):
     def info_params(self):
         return self.info_init_params + self.info_dynamics_params + self.info_emission_params
 
+    # todo: reconsider smoothing interface.
     def smooth(self):
         # Use the info E step because it can take advantage of diagonal noise
         # The standard E step could but we have not implemented it
@@ -299,8 +297,60 @@ class _SLDSStates(object):
         self.smoothed_sigmas, E_xtp1_xtT = \
             info_E_step(*self.info_params)
 
-        # self._set_expected_stats(
-        #     self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
+    def _init_mf_from_gibbs(self):
+        # Base class sets the expected HMM stats
+        # the first meanfield step will update the HMM params accordingly
+        super(_SLDSStates, self)._init_mf_from_gibbs()
+
+        self._mf_lds_normalizer = 0
+        self.smoothed_mus = self.gaussian_states.copy()
+        self.smoothed_sigmas = np.tile(0.01 * np.eye(self.D_latent)[None, :, :], (self.T, 1, 1))
+        E_xtp1_xtT = self.smoothed_mus[1:,:,None] * self.smoothed_mus[:-1,None,:]
+
+        self._set_gaussian_expected_stats(
+            self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
+
+    def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
+        """
+        Both meanfield and VBEM require expected statistics of the continuous latent
+        states, x.  This is a helper function to take E[x_t], E[x_t x_t^T] and E[x_{t+1}, x_t^T]
+        and compute the expected sufficient statistics for the initial distribution,
+        dynamics distribution, and Gaussian observation distribution.
+        """
+        assert not np.isnan(E_xtp1_xtT).any()
+        assert not np.isnan(smoothed_mus).any()
+        assert not np.isnan(smoothed_sigmas).any()
+        assert smoothed_mus.shape == (self.T, self.D_latent)
+        assert smoothed_sigmas.shape == (self.T, self.D_latent, self.D_latent)
+        assert E_xtp1_xtT.shape == (self.T-1, self.D_latent, self.D_latent)
+
+        # This is like LDSStates._set_expected_states but doesn't sum over time
+        T = self.T
+        E_x_xT = smoothed_sigmas + smoothed_mus[:, :, None] * smoothed_mus[:, None, :]
+        E_x_uT = smoothed_mus[:, :, None] * self.inputs[:, None, :]
+        E_u_uT = self.inputs[:, :, None] * self.inputs[:, None, :]
+
+        E_xu_xuT = np.concatenate((
+            np.concatenate((E_x_xT, E_x_uT), axis=2),
+            np.concatenate((np.transpose(E_x_uT, (0, 2, 1)), E_u_uT), axis=2)),
+            axis=1)
+        E_xut_xutT = E_xu_xuT[:-1]
+        E_xtp1_xtp1T = E_x_xT[1:]
+        E_xtp1_utT = (smoothed_mus[1:, :, None] * self.inputs[:-1, None, :])
+        E_xtp1_xutT = np.concatenate((E_xtp1_xtT, E_xtp1_utT), axis=-1)
+
+        # Initial state stats
+        self.E_init_stats = (self.smoothed_mus[0], E_x_xT[0], 1.)
+
+        # Dynamics stats
+        self.E_dynamics_stats = (E_xtp1_xtp1T, E_xtp1_xutT, E_xut_xutT, np.ones(self.T-1))
+
+        # Emission stats
+        E_yyT = self.data**2 if self.diagonal_noise else self.data[:, :, None] * self.data[:, None, :]
+        E_yxT = self.data[:, :, None] * self.smoothed_mus[:, None, :]
+        E_yuT = self.data[:, :, None] * self.inputs[:, None, :]
+        E_yxuT = np.concatenate((E_yxT, E_yuT), axis=-1)
+        self.E_emission_stats = (E_yyT, E_yxuT, E_xu_xuT, np.ones(T))
 
 ######################
 #  algorithm mixins  #
@@ -325,6 +375,198 @@ class _SLDSStatesGibbs(_SLDSStates):
             info_sample(*self.info_params)
 
 
+class _SLDSStatesVBEM(_SLDSStates):
+    def __init__(self, model, **kwargs):
+        super(_SLDSStatesVBEM, self).__init__(model, **kwargs)
+        self.smoothed_mus = np.zeros((self.T, self.D_latent))
+        self.smoothed_sigmas = np.tile(np.eye(self.D_latent)[None, :, :], (self.T, self.D_latent))
+
+    @property
+    def vbem_info_init_params(self):
+        E_z0 = self.expected_states[0]
+        expand = lambda a: a[None, ...]
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
+
+        mu_set = [d.mu for d in self.init_dynamics_distns]
+        sigma_set = [d.sigma for d in self.init_dynamics_distns]
+
+        J_init_set = stack_set([np.linalg.inv(sigma) for sigma in sigma_set])
+        h_init_set = stack_set([J.dot(mu) for J, mu in zip(J_init_set, mu_set)])
+
+        J_init = np.tensordot(E_z0, J_init_set, axes=1)
+        h_init = np.tensordot(E_z0, h_init_set, axes=1)
+
+        hJh_init = np.array([h.T.dot(S).dot(h) for S, h in zip(sigma_set, h_init_set)])
+        logdet = np.array([np.linalg.slogdet(J)[1] for J in J_init_set])
+        log_Z_init = -1. / 2 * np.dot(E_z0, hJh_init)
+        log_Z_init += 1. / 2 * np.dot(E_z0, logdet)
+        log_Z_init -= self.D_latent / 2. * np.log(2 * np.pi)
+
+        return J_init, h_init, log_Z_init
+
+    @property
+    def vbem_info_dynamics_params(self):
+        E_z = self.expected_states[:-1]
+        expand = lambda a: a[None, ...]
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
+
+        A_set = [d.A[:, :self.D_latent] for d in self.dynamics_distns]
+        B_set = [d.A[:, self.D_latent:] for d in self.dynamics_distns]
+        Q_set = [d.sigma for d in self.dynamics_distns]
+
+        # Get the pairwise potentials
+        # TODO: Check for diagonal before inverting
+        J_pair_22_set = stack_set([np.linalg.inv(Q) for Q in Q_set])
+        J_pair_21_set = stack_set([-J22.dot(A) for A, J22 in zip(A_set, J_pair_22_set)])
+        J_pair_11_set = stack_set([A.T.dot(-J21) for A, J21 in zip(A_set, J_pair_21_set)])
+
+        J_pair_22 = np.tensordot(E_z, J_pair_22_set, axes=1)
+        J_pair_21 = np.tensordot(E_z, J_pair_21_set, axes=1)
+        J_pair_11 = np.tensordot(E_z, J_pair_11_set, axes=1)
+
+        h_pair_1_set = stack_set([B.T.dot(J) for B, J in zip(B_set, J_pair_21_set)])
+        h_pair_2_set = stack_set([B.T.dot(Qi) for B, Qi in zip(B_set, J_pair_22_set)])
+
+        h_pair_1 = np.tensordot(E_z, h_pair_1_set, axes=1)
+        h_pair_2 = np.tensordot(E_z, h_pair_2_set, axes=1)
+
+        h_pair_1 = np.einsum('ni,nij->nj', self.inputs[:-1], h_pair_1)
+        h_pair_2 = np.einsum('ni,nij->nj', self.inputs[:-1], h_pair_2)
+
+        # Compute the log normalizer
+        log_Z_pair = -self.D_latent / 2. * np.log(2 * np.pi) * np.ones(self.T - 1)
+
+        logdet = np.array([np.linalg.slogdet(Q)[1] for Q in Q_set])
+        logdet = np.dot(E_z, logdet)
+        log_Z_pair += -1. / 2 * logdet
+
+        hJh_pair = np.array([B.T.dot(np.linalg.solve(Q, B)) for B, Q in zip(B_set, Q_set)])
+        hJh_pair = np.tensordot(E_z, hJh_pair, axes=1)
+        log_Z_pair -= 1. / 2 * np.einsum('tij,ti,tj->t',
+                                         hJh_pair,
+                                         self.inputs[:-1],
+                                         self.inputs[:-1])
+
+        return J_pair_11, J_pair_21, J_pair_22, h_pair_1, h_pair_2, log_Z_pair
+
+    @property
+    def vbem_info_emission_params(self):
+
+        expand = lambda a: a[None, ...]
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
+
+        # TODO: Check for diagonal emissions
+        C_set = stack_set([d.A[:, :self.D_latent] for d in self.emission_distns])
+        D_set = stack_set([d.A[:, self.D_latent:] for d in self.emission_distns])
+        R_set = stack_set([d.sigma for d in self.emission_distns])
+        Ri_set = stack_set([np.linalg.inv(R) for R in R_set])
+        RiC_set = stack_set([Ri.dot(C) for C, Ri in zip(C_set, Ri_set)])
+        RiD_set = stack_set([Ri.dot(D) for D, Ri in zip(D_set, Ri_set)])
+        CRiC_set = stack_set([C.T.dot(RiC) for C, RiC in zip(C_set, RiC_set)])
+        DRiC_set = stack_set([D.T.dot(RiC) for D, RiC in zip(D_set, RiC_set)])
+        DRiD_set = stack_set([D.T.dot(RiD) for D, RiD in zip(D_set, RiD_set)])
+
+        # TODO: Faster to replace this with a loop over t?
+        E_z = self.expected_states
+        Ri = np.tensordot(E_z, Ri_set, axes=1)
+        RiC = np.tensordot(E_z, RiC_set, axes=1)
+        RiD = np.tensordot(E_z, RiD_set, axes=1)
+        DRiC = np.tensordot(E_z, DRiC_set, axes=1)
+        DRiD = np.tensordot(E_z, DRiD_set, axes=1)
+
+        J_node = np.tensordot(E_z, CRiC_set, axes=1)
+
+        # h_node = y^T R^{-1} C - u^T D^T R^{-1} C
+        h_node = np.einsum('ni,nij->nj', self.data, RiC)
+        h_node -= np.einsum('ni,nij->nj', self.inputs, DRiC)
+
+        log_Z_node = -self.D_emission / 2. * np.log(2 * np.pi) * np.ones(self.T)
+
+        logdet = np.array([np.linalg.slogdet(R)[1] for R in R_set])
+        logdet = np.dot(E_z, logdet)
+        log_Z_node += -1. / 2 * logdet
+
+        # E[(y-Du)^T R^{-1} (y-Du)]
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', Ri,
+                                         self.data, self.data)
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', -2 * RiD,
+                                         self.data, self.inputs)
+        log_Z_node -= 1. / 2 * np.einsum('tij,ti,tj->t', DRiD,
+                                         self.inputs, self.inputs)
+
+        return J_node, h_node, log_Z_node
+
+    @property
+    def vbem_info_params(self):
+        return self.vbem_info_init_params + \
+               self.vbem_info_dynamics_params + \
+               self.vbem_info_emission_params
+
+    @property
+    def vbem_aBl(self):
+        """
+        These are the expected log likelihoods (node potentials)
+        as seen from the discrete states.  In other words,
+        E_{q(x)} [log p(y, x | z)]
+        """
+        vbem_aBl = np.zeros((self.T, self.num_states))
+        ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
+            self.emission_distns
+
+        for k, (id, dd, ed) in enumerate(zip(ids, dds, eds)):
+            vbem_aBl[0, k] = expected_gaussian_logprob(id.mu, id.sigma, self.E_init_stats)
+            vbem_aBl[:-1, k] += expected_regression_log_prob(dd.A, dd.sigma, self.E_dynamics_stats)
+            vbem_aBl[:, k] += expected_regression_log_prob(ed.A, ed.sigma, self.E_emission_stats)
+
+        vbem_aBl[np.isnan(vbem_aBl).any(1)] = 0.
+        return vbem_aBl
+
+    def vb_E_step(self):
+        H_z = self.vb_E_step_discrete_states()
+        H_x = self.vb_E_step_gaussian_states()
+        self._variational_entropy = H_z + H_x
+
+    def vb_E_step_discrete_states(self):
+        # Call pyhsmm to do message passing and compute expected suff stats
+        aBl = self.vbem_aBl
+        self.all_expected_stats = self._expected_statistics(self.trans_matrix, self.pi_0, aBl)
+        params = (np.log(self.trans_matrix), np.log(self.pi_0), aBl, self._normalizer)
+        return hmm_entropy(params, self.all_expected_stats)
+
+    def vb_E_step_gaussian_states(self):
+        info_params = self.vbem_info_params
+
+        # Call pylds to do message passing and compute expected suff stats
+        stats = info_E_step(*info_params)
+        self._lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT = stats
+        self._set_gaussian_expected_stats(self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
+
+        # Compute the variational entropy
+        # ve1 = lds_entropy(info_params, stats)
+        # ve2 = test_lds_entropy(info_params)
+        # assert np.allclose(ve1, ve2)
+        # return ve1
+        return lds_entropy(info_params, stats)
+
+    def vb_elbo(self):
+        return self.expected_log_joint_probability() + self._variational_entropy
+
+    def expected_log_joint_probability(self):
+        """
+        Compute E_{q(z) q(x)} [log p(z) + log p(x | z) + log p(y | x, z)]
+        """
+        # E_{q(z)}[log p(z)]
+        from pyslds.util import expected_hmm_logprob
+        elp = expected_hmm_logprob(
+            self.pi_0, self.trans_matrix,
+            (self.expected_states, self.expected_transcounts, self._normalizer))
+
+        # E_{q(x)}[log p(y, x | z)]  is given by aBl
+        # To get E_{q(x)}[ aBl ] we multiply and sum
+        elp += np.sum(self.expected_states * self.vbem_aBl)
+        return elp
+
+
 class _SLDSStatesMeanField(_SLDSStates):
     def __init__(self, model, **kwargs):
         super(_SLDSStatesMeanField, self).__init__(model, **kwargs)
@@ -332,9 +574,27 @@ class _SLDSStatesMeanField(_SLDSStates):
         self.smoothed_sigmas = np.tile(np.eye(self.D_latent)[None, :, :], (self.T, self.D_latent))
 
     @property
+    def expected_info_init_params(self):
+        from pybasicbayes.util.stats import niw_expectedstats
+        def get_paramseq(distns):
+            contract = partial(np.tensordot, self.expected_states[0], axes=1)
+            params = [niw_expectedstats(d.nu_mf, d.sigma_mf, d.mu_mf, d.kappa_mf)
+                      for d in distns]
+            return list(map(contract, zip(*params)))
+
+        J_init, h_init, hJih_init, logdet_J_init = \
+            get_paramseq(self.init_dynamics_distns)
+
+        log_Z_init = -1. / 2 * hJih_init
+        log_Z_init += 1. / 2 * logdet_J_init
+        log_Z_init -= self.D_latent / 2. * np.log(2 * np.pi)
+
+        return J_init, h_init, log_Z_init
+
+    @property
     def expected_info_dynamics_params(self):
         def get_paramseq(distns):
-            contract = partial(np.tensordot, self.expected_states, axes=1)
+            contract = partial(np.tensordot, self.expected_states[:-1], axes=1)
             params = [d.meanfield_expectedstats() for d in distns]
             return list(map(contract, zip(*params)))
 
@@ -350,12 +610,12 @@ class _SLDSStatesMeanField(_SLDSStates):
         E_BT_Qinv_B = J_pair_11[:,n:,n:]
         E_AT_Qinv_A = J_pair_11[:,:n,:n].copy("C")
 
-        h_pair_1 = -np.einsum('ti,tij->tj', self.inputs, E_BT_Qinv_A)
-        h_pair_2 = np.einsum('ti,tji->tj', self.inputs, E_Qinv_B)
+        h_pair_1 = -np.einsum('ti,tij->tj', self.inputs[:-1], E_BT_Qinv_A)
+        h_pair_2 = np.einsum('ti,tji->tj', self.inputs[:-1], E_Qinv_B)
 
-        log_Z_pair = 1./2 * logdet_pair[:-1]
+        log_Z_pair = 1./2 * logdet_pair
         log_Z_pair -= self.D_latent / 2. * np.log(2 * np.pi)
-        log_Z_pair -= 1. / 2 * np.einsum('tij,ti,tj->t', E_BT_Qinv_B[:-1],
+        log_Z_pair -= 1. / 2 * np.einsum('tij,ti,tj->t', E_BT_Qinv_B,
                                          self.inputs[:-1], self.inputs[:-1])
 
         return E_AT_Qinv_A, -E_Qinv_A, E_Qinv, h_pair_1, h_pair_2, log_Z_pair
@@ -397,7 +657,7 @@ class _SLDSStatesMeanField(_SLDSStates):
 
     @property
     def expected_info_params(self):
-        return self.info_init_params + \
+        return self.expected_info_init_params + \
                self.expected_info_dynamics_params + \
                self.expected_info_emission_params
 
@@ -407,107 +667,63 @@ class _SLDSStatesMeanField(_SLDSStates):
         These are the expected log likelihoods (node potentials)
         as seen from the discrete states.
         """
-        if self._mf_aBl is None:
-            mf_aBl = self._mf_aBl = np.zeros((self.T, self.num_states))
-            ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
-                self.emission_distns
+        mf_aBl = self._mf_aBl = np.zeros((self.T, self.num_states))
+        ids, dds, eds = self.init_dynamics_distns, self.dynamics_distns, \
+            self.emission_distns
 
-            for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
-                mf_aBl[0,idx] = d1.expected_log_likelihood(
-                    stats=self.E_init_stats)
-                mf_aBl[:-1,idx] += d2.expected_log_likelihood(
-                    stats=self.E_dynamics_stats)
-                mf_aBl[:,idx] += d3.expected_log_likelihood(
-                    stats=self.E_emission_stats)
+        for idx, (d1, d2, d3) in enumerate(zip(ids, dds, eds)):
+            mf_aBl[0,idx] = d1.expected_log_likelihood(
+                stats=self.E_init_stats)
+            mf_aBl[:-1,idx] += d2.expected_log_likelihood(
+                stats=self.E_dynamics_stats)
+            mf_aBl[:,idx] += d3.expected_log_likelihood(
+                stats=self.E_emission_stats)
 
-            mf_aBl[np.isnan(mf_aBl).any(1)] = 0.
-        return self._mf_aBl
+        mf_aBl[np.isnan(mf_aBl).any(1)] = 0.
+        return mf_aBl
 
     def meanfieldupdate(self, niter=1):
-        niter = self.niter if hasattr(self, 'niter') else niter
-        for itr in range(niter):
-            self.meanfield_update_discrete_states()
-            self.meanfield_update_gaussian_states()
-
-        self._mf_aBl = None
-
-    def _init_mf_from_gibbs(self):
-        # Base class sets the expected HMM stats
-        # the first meanfield step will update the HMM params accordingly
-        super(_SLDSStatesMeanField, self)._init_mf_from_gibbs()
-
-        self._mf_lds_normalizer = 0
-        self.smoothed_mus = self.gaussian_states.copy()
-        self.smoothed_sigmas = np.tile(0.01 * np.eye(self.D_latent)[None, :, :], (self.T, 1, 1))
-        E_xtp1_xtT = self.smoothed_mus[1:,:,None] * self.smoothed_mus[:-1,None,:]
-
-        self._set_gaussian_expected_stats(
-            self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
+        H_z = self.meanfield_update_discrete_states()
+        H_x = self.meanfield_update_gaussian_states()
+        self._variational_entropy = H_z + H_x
 
     def meanfield_update_discrete_states(self):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
 
+        # Compute the variational entropy
+        return hmm_entropy(self._mf_param_snapshot, self.all_expected_stats)
+
     def meanfield_update_gaussian_states(self):
-        self._mf_lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, \
-            E_xtp1_xtT = info_E_step(*self.expected_info_params)
+        info_params = self.expected_info_params
 
-        self._set_gaussian_expected_stats(
-            self.smoothed_mus,self.smoothed_sigmas,E_xtp1_xtT)
+        # Call pylds to do message passing and compute expected suff stats
+        stats = info_E_step(*self.expected_info_params)
+        self._lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT = stats
+        self._set_gaussian_expected_stats(self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
 
-    def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
-        assert not np.isnan(E_xtp1_xtT).any()
-        assert not np.isnan(smoothed_mus).any()
-        assert not np.isnan(smoothed_sigmas).any()
-
-        # This is like LDSStates._set_expected_states but doesn't sum over time
-        T = self.T
-        E_x_xT = smoothed_sigmas + self.smoothed_mus[:, :, None] * self.smoothed_mus[:, None, :]
-        E_x_uT = smoothed_mus[:, :, None] * self.inputs[:, None, :]
-        E_u_uT = self.inputs[:, :, None] * self.inputs[:, None, :]
-
-        E_xu_xuT = np.concatenate((
-            np.concatenate((E_x_xT, E_x_uT), axis=2),
-            np.concatenate((np.transpose(E_x_uT, (0, 2, 1)), E_u_uT), axis=2)),
-            axis=1)
-
-        E_xut_xutT = E_xu_xuT[:-1]
-
-        E_xtp1_xtp1T = E_x_xT[1:]
-        E_xtp1_xtT = E_xtp1_xtT
-
-        E_xtp1_utT = (smoothed_mus[1:, :, None] * self.inputs[:-1, None, :])
-        E_xtp1_xutT = np.concatenate((E_xtp1_xtT, E_xtp1_utT), axis=-1)
-
-        # Initial state stats
-        self.E_init_stats = (self.smoothed_mus[0], E_x_xT[0], 1.)
-
-        # Dynamics stats
-        # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
-        # TODO only compute EyyT once
-        # E_xtp1_xtp1T = self.E_xtp1_xtp1T = E_xu_xuT[1:]
-        # E_xt_xtT = self.E_xt_xtT = E_xu_xuT[:-1]
-        #
-        # self.E_dynamics_stats = \
-        #     (E_xtp1_xtp1T, E_xtp1_xtT, E_xt_xtT, np.ones(T-1))
-        self.E_dynamics_stats = (E_xtp1_xtp1T, E_xtp1_xutT, E_xut_xutT, np.ones(self.T-1))
-
-        # Emission stats
-        E_yyT = self.data**2 if self.diagonal_noise else self.data[:, :, None] * self.data[:, None, :]
-        E_yxT = self.data[:, :, None] * self.smoothed_mus[:, None, :]
-        E_yuT = self.data[:, :, None] * self.inputs[:, None, :]
-        E_yxuT = np.concatenate((E_yxT, E_yuT), axis=-1)
-        self.E_emission_stats = (E_yyT, E_yxuT, E_xu_xuT, np.ones(T))
-
+        # Compute the variational entropy
+        return lds_entropy(info_params, stats)
 
     def get_vlb(self, most_recently_updated=False):
-        if not most_recently_updated:
-            raise NotImplementedError  # TODO
-        else:
-            # TODO hmm_vlb term is jumpy
-            hmm_vlb = super(_SLDSStatesMeanField, self).get_vlb(
-                most_recently_updated=False)
-            return hmm_vlb + self._mf_lds_normalizer
+        # E_{q(z)}[log p(z)]
+        from pyslds.util import expected_hmm_logprob
+        vlb = expected_hmm_logprob(
+            self.mf_pi_0, self.mf_trans_matrix,
+            (self.expected_states, self.expected_transcounts, self._normalizer))
 
+        # E_{q(x)}[log p(y, x | z)]  is given by aBl
+        # To get E_{q(x)}[ aBl ] we multiply and sum
+        vlb += np.sum(self.expected_states * self.mf_aBl)
+
+        # Add the variational entropy
+        vlb += self._variational_entropy
+
+        # test: compare to old code
+        # vlb2 = super(_SLDSStatesMeanField, self).get_vlb(
+        #         most_recently_updated=False) \
+        #        + self._lds_normalizer
+        # print(vlb - vlb2)
+        return vlb
 
     def meanfield_smooth(self):
         # Use the smoothed latent states in combination with the expected
@@ -706,53 +922,6 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesMeanField):
         assert not np.isnan(E_xtp1_xtT).any()
         assert not np.isnan(smoothed_mus).any()
         assert not np.isnan(smoothed_sigmas).any()
-
-        # Same as in parent class
-        # this is like LDSStates._set_expected_states but doesn't sum over time
-        # T = self.T
-        # E_x_xT = self.ExxT = smoothed_sigmas \
-        #                    + self.smoothed_mus[:, :, None] * self.smoothed_mus[:, None, :]
-        #
-        # E_x_uT = smoothed_mus[:, :, None] * self.inputs[:, None, :]
-        # E_u_uT = self.inputs[:, :, None] * self.inputs[:, None, :]
-        #
-        # E_xu_xuT = np.concatenate((
-        #     np.concatenate((E_x_xT, E_x_uT), axis=2),
-        #     np.concatenate((np.transpose(E_x_uT, (0, 2, 1)), E_u_uT), axis=2)),
-        #     axis=1)
-        # E_xut_xutT = E_xu_xuT[:-1]
-        #
-        # E_xtp1_xtp1T = E_x_xT[1:]
-        # E_xtp1_xtT = E_xtp1_xtT
-        #
-        # E_xtp1_utT = (smoothed_mus[1:, :, None] * self.inputs[:-1, None, :]).sum(0)
-        # E_xtp1_xutT = np.hstack((E_xtp1_xtT, E_xtp1_utT))
-        #
-        # # Initial state stats
-        # self.E_init_stats = (self.smoothed_mus[0], E_x_xT[0], 1.)
-        #
-        # # Dynamics stats
-        # # # TODO avoid memory instantiation by adding to Regression (2TD vs TD^2)
-        # # # TODO only compute EyyT once
-        # # E_xtp1_xtp1T = self.E_xtp1_xtp1T = ExxT[1:]
-        # # E_xt_xtT = self.E_xt_xtT = ExxT[:-1]
-        #
-        # self.E_dynamics_stats = \
-        #     (E_xtp1_xtp1T, E_xtp1_xtT, E_xut_xutT, np.ones(T - 1))
-        #
-        # # Emission stats
-        # masked_data = self.data * self.mask if self.mask is not None else self.data
-        # if self.diagonal_noise:
-        #     E_ysq = self.EyyT = masked_data ** 2
-        #     E_yxT = self.EyxT = masked_data[:, :, None] * self.smoothed_mus[:, None, :]
-        #     E_yuT = masked_data[:, :, None] * self.inputs[:, None, :]
-        #     E_yxuT = np.concatenate((E_yxT, E_yuT), axis=-1)
-        #     E_xu_xuT = self.mask[:,:,None,None] * E_xu_xuT[:,None,:,:]
-        #
-        #     # Emission stats
-        #     self.E_emission_stats = (E_ysq, E_yxuT, E_xu_xuT, self.mask)
-        #
-        #     self.E_emission_stats = (Eysq, EyxT, ExxT, self.mask)
 
         # This is like LDSStates._set_expected_states but doesn't sum over time
         T = self.T
@@ -983,6 +1152,7 @@ class HMMSLDSStatesPython(
     _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
+    _SLDSStatesVBEM,
     _SLDSStatesMeanField,
     HMMStatesPython):
     pass
@@ -992,6 +1162,7 @@ class HMMSLDSStatesEigen(
     _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
+    _SLDSStatesVBEM,
     _SLDSStatesMeanField,
     HMMStatesEigen):
     pass
@@ -1001,6 +1172,7 @@ class HSMMSLDSStatesPython(
     _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
+    _SLDSStatesVBEM,
     _SLDSStatesMeanField,
     HSMMStatesPython):
     pass
@@ -1010,6 +1182,7 @@ class HSMMSLDSStatesEigen(
     _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
+    _SLDSStatesVBEM,
     _SLDSStatesMeanField,
     HSMMStatesEigen):
     pass
@@ -1019,6 +1192,7 @@ class GeoHSMMSLDSStates(
     _SLDSStatesCountData,
     _SLDSStatesMaskedData,
     _SLDSStatesGibbs,
+    _SLDSStatesVBEM,
     _SLDSStatesMeanField,
     GeoHSMMStates):
     pass

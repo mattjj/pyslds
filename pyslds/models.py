@@ -8,13 +8,9 @@ from pybasicbayes.distributions import DiagonalRegression, Gaussian, Regression
 import pyhsmm
 from pyhsmm.util.general import list_split
 
-from pylds.util import random_rotation
+from pyslds.states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, HSMMSLDSStatesEigen
+from pyslds.util import gaussian_map_estimation, regression_map_estimation, niw_logprob, mniw_logprob
 
-from pyslds.states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, \
-    HSMMSLDSStatesEigen
-
-
-from pybasicbayes.abstractions import Distribution
 
 class _SLDSMixin(object):
     def __init__(self,dynamics_distns,emission_distns,init_dynamics_distns,**kwargs):
@@ -167,13 +163,78 @@ class _SLDSGibbsMixin(_SLDSMixin):
                 s.stateseq, s.gaussian_states, s._normalizer = tup
 
 
+class _SLDSVBEMMixin(_SLDSMixin):
+
+    def _vb_E_step(self):
+        # update the variational approximation for the states
+        for state in self.states_list:
+            state.vb_E_step()
+
+    def _vb_M_step(self):
+        # Update the HMM parameters
+        self._M_step_init_state_distn()
+        self._M_step_trans_distn()
+
+        # Update the LDS parameters
+        self._M_step_init_dynamics_distn()
+        self._M_step_dynamics_distn()
+        self._M_step_emission_distn()
+
+
+    def _M_step_init_dynamics_distn(self):
+        sum_tuples = lambda lst: list(map(sum, zip(*lst)))
+        E_init_stats = lambda i, s: \
+            tuple(s.expected_states[0, i] * stat for stat in s.E_init_stats)
+
+        for state, d in enumerate(self.init_dynamics_distns):
+            gaussian_map_estimation(sum_tuples(E_init_stats(state, s) for s in self.states_list), d)
+
+    def _M_step_dynamics_distn(self):
+        contract = partial(np.tensordot, axes=1)
+        sum_tuples = lambda lst: list(map(sum, zip(*lst)))
+
+        E_dyn_stats = lambda i, s: \
+            tuple(contract(s.expected_states[:-1, i], stat) for stat in s.E_dynamics_stats)
+
+        for state, d in enumerate(self.dynamics_distns):
+            regression_map_estimation(sum_tuples(E_dyn_stats(state, s) for s in self.states_list), d)
+
+    def _M_step_emission_distn(self):
+        contract = partial(np.tensordot, axes=1)
+        sum_tuples = lambda lst: list(map(sum, zip(*lst)))
+
+        if self._single_emission:
+            E_emi_stats = lambda s: \
+                tuple(np.sum(stat, axis=0) for stat in s.E_emission_stats)
+            regression_map_estimation(sum_tuples(E_emi_stats(s) for s in self.states_list), self._emission_distn)
+        else:
+            E_emi_stats = lambda i, s: \
+                tuple(contract(s.expected_states[:, i], stat) for stat in s.E_emission_stats)
+            for state, d in enumerate(self.emission_distns):
+                regression_map_estimation(sum_tuples(E_emi_stats(state, s) for s in self.states_list), d)
+
+    def VBEM_step(self, n_iter=1):
+        for _ in range(n_iter):
+            self._vb_E_step()
+        self._vb_M_step()
+
+    def VBEM_ELBO(self):
+        # log p(theta)
+        elbo = np.sum([niw_logprob(id) for id in self.init_dynamics_distns])
+        elbo += np.sum([mniw_logprob(dd) for dd in self.dynamics_distns])
+        elbo += np.sum([mniw_logprob(ed) for ed in self.emission_distns])
+
+        # E_q [log p(z, x, y, theta)]
+        elbo += sum(s.vb_elbo() for s in self.states_list)
+        return elbo
+
+
 class _SLDSMeanFieldMixin(_SLDSMixin):
     def meanfield_update_parameters(self):
         self.meanfield_update_init_dynamics_distns()
         self.meanfield_update_dynamics_distns()
         self.meanfield_update_emission_distns()
         super(_SLDSMeanFieldMixin, self).meanfield_update_parameters()
-
 
     def meanfield_update_init_dynamics_distns(self):
         sum_tuples = lambda lst: list(map(sum, zip(*lst)))
@@ -183,7 +244,6 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
         for state, d in enumerate(self.init_dynamics_distns):
             d.meanfieldupdate(
                 stats=sum_tuples(E_stats(state, s) for s in self.states_list))
-
 
     def meanfield_update_dynamics_distns(self):
         contract = partial(np.tensordot, axes=1)
@@ -245,34 +305,35 @@ class _SLDSMeanFieldMixin(_SLDSMixin):
         return vlb
 
 
-class HMMSLDSPython(_SLDSGibbsMixin, pyhsmm.models.HMMPython):
+class HMMSLDSPython(_SLDSGibbsMixin, _SLDSVBEMMixin, _SLDSMeanFieldMixin, pyhsmm.models.HMMPython):
     _states_class = HMMSLDSStatesPython
 
 
-class HMMSLDS(_SLDSGibbsMixin, _SLDSMeanFieldMixin, pyhsmm.models.HMM):
+class HMMSLDS(_SLDSGibbsMixin, _SLDSVBEMMixin, _SLDSMeanFieldMixin, pyhsmm.models.HMM):
     _states_class = HMMSLDSStatesEigen
 
 
-class HSMMSLDSPython(_SLDSGibbsMixin, pyhsmm.models.HSMMPython):
+class HSMMSLDSPython(_SLDSGibbsMixin, _SLDSVBEMMixin, _SLDSMeanFieldMixin, pyhsmm.models.HSMMPython):
     _states_class = HSMMSLDSStatesPython
 
 
-class HSMMSLDS(_SLDSGibbsMixin, pyhsmm.models.HSMM):
+class HSMMSLDS(_SLDSGibbsMixin, _SLDSVBEMMixin, _SLDSMeanFieldMixin, pyhsmm.models.HSMM):
     _states_class = HSMMSLDSStatesEigen
 
 
-class WeakLimitHDPHMMSLDS(_SLDSGibbsMixin, pyhsmm.models.WeakLimitHDPHMM):
+class WeakLimitHDPHMMSLDS(_SLDSGibbsMixin, _SLDSVBEMMixin, _SLDSMeanFieldMixin,
+                          pyhsmm.models.WeakLimitHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
 
 class WeakLimitStickyHDPHMMSLDS(
-        _SLDSGibbsMixin,
-        _SLDSMeanFieldMixin,
+        _SLDSGibbsMixin, _SLDSVBEMMixin, _SLDSMeanFieldMixin,
         pyhsmm.models.WeakLimitStickyHDPHMM):
     _states_class = HMMSLDSStatesEigen
 
 
-class WeakLimitHDPHSMMSLDS(_SLDSGibbsMixin, pyhsmm.models.WeakLimitHDPHSMM):
+class WeakLimitHDPHSMMSLDS(_SLDSGibbsMixin, _SLDSVBEMMixin, _SLDSMeanFieldMixin,
+                           pyhsmm.models.WeakLimitHDPHSMM):
     _states_class = HSMMSLDSStatesEigen
 
 

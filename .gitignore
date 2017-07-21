@@ -1,1 +1,5 @@
 *.pyc
+.idea/*
+.DS_Store
+pyslds.egg-info/*
+examples/.ipynb_checkpoints/*

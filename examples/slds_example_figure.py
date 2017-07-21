@@ -185,7 +185,7 @@ def draw_slds_figure(z, x, y):
 
     # fig.savefig(filename + ".pdf")
     # fig.savefig(filename+".pdf", **saveargs)
-    # fig.savefig(filename+".png", **saveargs)
+    fig.savefig(filename+".png", **saveargs)
 
     plt.show()
 
