@@ -28,8 +28,8 @@ def random_rotation(n,theta):
     return q.dot(out).dot(q.T)
 
 
-As = [random_rotation(D_latent, np.pi/24.),
-     random_rotation(D_latent, np.pi/12.)]
+As = [0.99 * random_rotation(D_latent, np.pi/24.),
+      0.99 * random_rotation(D_latent, np.pi/12.)]
 
 C = np.random.randn(D_obs, D_latent)
 sigma_obs = 0.5 * np.ones(D_obs)
@@ -39,7 +39,7 @@ sigma_obs = 0.5 * np.ones(D_obs)
 #  generate data  #
 ###################
 init_dynamics_distns = [Gaussian(mu=mu_init, sigma=sigma_init) for _ in range(K)]
-dynamics_distns = [Regression(A=A, sigma=0.01*np.eye(D_latent)) for A in As]
+dynamics_distns = [Regression(A=A, sigma=np.eye(D_latent)) for A in As]
 emission_distns = DiagonalRegression(D_obs, D_latent, A=C, sigmasq=sigma_obs)
 
 truemodel = HMMSLDS(
@@ -58,14 +58,15 @@ gaussian_states = statesobj.gaussian_states
 truemodel.states_list.append(statesobj)
 
 # Mask off a chunk of data
+# mask = npr.rand(*data.shape) < 0.5
 mask = np.ones_like(data, dtype=bool)
 chunksz = 200
 for i,offset in enumerate(range(0,T,chunksz)):
     j = i % (D_obs + 1)
     if j < D_obs:
         mask[offset:min(offset+chunksz, T), j] = False
-    # if j == D_obs:
-    #     mask[offset:min(offset+chunksz, T), :] = False
+    if j == D_obs:
+        mask[offset:min(offset+chunksz, T), :] = False
 statesobj.mask = mask
 
 ###############
@@ -83,90 +84,45 @@ model = WeakLimitStickyHDPHMMSLDS(
             A=np.eye(D_latent), sigma=np.eye(D_latent),
             nu_0=D_latent+3,
             S_0=D_latent*np.eye(D_latent),
-            M_0=np.zeros((D_latent, D_latent)),
+            M_0=np.eye(D_latent),
             K_0=D_latent*np.eye(D_latent),
         ) for _ in range(Kmax)],
     emission_distns=
         DiagonalRegression(
             D_obs, D_latent,
             alpha_0=2.0, beta_0=1.0,
-            # A=C.copy(), sigmasq=0.5*np.ones(D_obs),
+            A=C.copy(), sigmasq=0.5*np.ones(D_obs),
         ),
     alpha=3., gamma=3.0, kappa=1., init_state_distn='uniform')
 model.add_data(data=data, mask=mask)
-# model.states_list[0].gaussian_states = statesobj.gaussian_states.copy()
 
 ###############
 #  fit model  #
 ###############
-N_samples = 500
-def gibbs_update(model):
+N_init_samples = 0
+for _ in progprint_xrange(N_init_samples):
     model.resample_model()
+model._init_mf_from_gibbs()
+
+
+N_iters = 500
+def gibbs_update(model):
+    model.VBEM_step()
     smoothed_obs = model.states_list[0].smooth()
-    return model.log_likelihood(), model.stateseqs[0], smoothed_obs
-
-def partial_meanfield_update(model):
-    for s in model.states_list:
-        s.meanfield_update_gaussian_states()
-    model.meanfield_update_parameters()
-
-def meanfield_update(model):
-    vlb = model.meanfield_coordinate_descent_step()
-    expected_states = model.states_list[0].expected_states
-    smoothed_obs = model.states_list[0].meanfield_smooth()
-    return model.log_likelihood(), vlb, expected_states[:,1], smoothed_obs
-
-def svi_update(model, stepsize, minibatchsize):
-    # Sample a minibatch
-    start = np.random.randint(0,T-minibatchsize+1)
-    minibatch = data[start:start+minibatchsize]
-    minibatch_mask = mask[start:start+minibatchsize]
-    prob = minibatchsize/float(T)
-    model.meanfield_sgdstep(minibatch, prob, stepsize, masks=minibatch_mask)
-
-    model.resample_from_mf()
-    return model.log_likelihood(data)
-
+    lp = model.log_likelihood()
+    return lp, model.stateseqs[0], smoothed_obs
 
 # Gibbs
-lls, z_smpls, smoothed_obss = zip(*[gibbs_update(model) for _ in progprint_xrange(N_samples)])
-
-## Mean field (initialized with Gibbs)
-# for _ in progprint_xrange(20):
-#     model.resample_model()
-# model._init_mf_from_gibbs()
-#
-# for _ in progprint_xrange(10):
-#     partial_meanfield_update(model)
-#
-# lls, vlbs, z_smpls, smoothed_obss = zip(*[meanfield_update(model) for _ in progprint_xrange(N_samples)])
-
-## SVI
-# delay = 10.0
-# forgetting_rate = 0.5
-# stepsizes = (np.arange(N_samples) + delay)**(-forgetting_rate)
-# minibatchsize = 500
-# # [model.resample_model() for _ in progprint_xrange(100)]
-# lls = [svi_update(model, stepsizes[itr], minibatchsize) for itr in progprint_xrange(N_samples)]
-
+lls, z_smpls, smoothed_obss = zip(*[gibbs_update(model) for _ in progprint_xrange(N_iters)])
 
 ################
 # likelihoods  #
 ################
 plt.figure(figsize=(10,6))
-# plt.subplot(121)
-plt.plot(lls,'-b')
-plt.plot([0,N_samples], truemodel.log_likelihood() * np.ones(2), '-k')
+plt.plot(lls[1:],'-b')
+plt.plot([0, N_iters - 1], truemodel.log_likelihood() * np.ones(2), '-k')
 plt.xlabel('iteration')
 plt.ylabel('log likelihood')
-
-# plt.subplot(122)
-# # plt.plot(vlbs,'-b')
-# plt.plot(lls,'-b')
-# plt.xlabel('iteration')
-# plt.ylabel("log likelihood")
-# plt.savefig("log_likelihood.png")
-
 
 ################
 #  smoothing   #

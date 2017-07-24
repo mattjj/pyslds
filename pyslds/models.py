@@ -9,7 +9,9 @@ import pyhsmm
 from pyhsmm.util.general import list_split
 
 from pyslds.states import HMMSLDSStatesPython, HMMSLDSStatesEigen, HSMMSLDSStatesPython, HSMMSLDSStatesEigen
-from pyslds.util import gaussian_map_estimation, regression_map_estimation, niw_logprob, mniw_logprob
+from pyslds.states import HMMCountSLDSStatesPython, HMMCountSLDSStatesEigen, HSMMCountSLDSStatesPython, \
+    HSMMCountSLDSStatesEigen
+from pyslds.util import gaussian_map_estimation, regression_map_estimation, gaussian_logprior, regression_logprior
 
 
 class _SLDSMixin(object):
@@ -65,9 +67,6 @@ class _SLDSMixin(object):
     def has_missing_data(self):
         return any([s.mask is not None for s in self.states_list])
 
-    @property
-    def has_count_data(self):
-        return any([hasattr(s, "omega") for s in self.states_list])
 
 class _SLDSGibbsMixin(_SLDSMixin):
     def resample_parameters(self):
@@ -106,11 +105,8 @@ class _SLDSGibbsMixin(_SLDSMixin):
             data = [(np.hstack((s.gaussian_states, s.inputs)), s.data)
                     for s in self.states_list]
             mask = [s.mask for s in self.states_list] if self.has_missing_data else None
-            omega = [s.omega for s in self.states_list] if self.has_count_data else None
 
-            if self.has_count_data:
-                self._emission_distn.resample(data=data, mask=mask, omega=omega)
-            elif self.has_missing_data:
+            if self.has_missing_data:
                 self._emission_distn.resample(data=data, mask=mask)
             else:
                 self._emission_distn.resample(data=data)
@@ -123,12 +119,8 @@ class _SLDSGibbsMixin(_SLDSMixin):
 
                 mask = [s.mask[s.stateseq == state] for s in self.states_list] \
                     if self.has_missing_data else None
-                omega = [s.omega[s.stateseq == state] for s in self.states_list] \
-                    if self.has_count_data else None
 
-                if self.has_count_data:
-                    d.resample(data=data, mask=mask, omega=omega)
-                elif self.has_missing_data:
+                if self.has_missing_data:
                     d.resample(data=data, mask=mask)
                 else:
                     d.resample(data=data)
@@ -183,7 +175,6 @@ class _SLDSVBEMMixin(_SLDSMixin):
         self._M_step_dynamics_distn()
         self._M_step_emission_distn()
 
-
     def _M_step_init_dynamics_distn(self):
         sum_tuples = lambda lst: list(map(sum, zip(*lst)))
         E_init_stats = lambda i, s: \
@@ -209,7 +200,8 @@ class _SLDSVBEMMixin(_SLDSMixin):
         if self._single_emission:
             E_emi_stats = lambda s: \
                 tuple(np.sum(stat, axis=0) for stat in s.E_emission_stats)
-            regression_map_estimation(sum_tuples(E_emi_stats(s) for s in self.states_list), self._emission_distn)
+            stats = sum_tuples(E_emi_stats(s) for s in self.states_list)
+            regression_map_estimation(stats, self._emission_distn)
         else:
             E_emi_stats = lambda i, s: \
                 tuple(contract(s.expected_states[:, i], stat) for stat in s.E_emission_stats)
@@ -223,9 +215,13 @@ class _SLDSVBEMMixin(_SLDSMixin):
 
     def VBEM_ELBO(self):
         # log p(theta)
-        elbo = np.sum([niw_logprob(id) for id in self.init_dynamics_distns])
-        elbo += np.sum([mniw_logprob(dd) for dd in self.dynamics_distns])
-        elbo += np.sum([mniw_logprob(ed) for ed in self.emission_distns])
+        elbo = np.sum([gaussian_logprior(id) for id in self.init_dynamics_distns])
+        elbo += np.sum([regression_logprior(dd) for dd in self.dynamics_distns])
+
+        if self._single_emission:
+            elbo += regression_logprior(self.emission_distns[0])
+        else:
+            elbo += np.sum([regression_logprior(ed) for ed in self.emission_distns])
 
         # E_q [log p(z, x, y, theta)]
         elbo += sum(s.vb_elbo() for s in self.states_list)
@@ -485,3 +481,57 @@ def DefaultWeakLimitStickyHDPSLDS(K, D_obs, D_latent, D_input=0,
                           Cs=Cs, Ds=Ds, sigma_obss=sigma_obss,
                           kappa=kappa, alpha=alpha, gamma=gamma,
                           **kwargs)
+
+
+class _CountSLDSMixin(_SLDSGibbsMixin):
+
+    def resample_emission_distns(self):
+        if self._single_emission:
+            data = [(np.hstack((s.gaussian_states, s.inputs)), s.data)
+                    for s in self.states_list]
+            mask = [s.mask for s in self.states_list] if self.has_missing_data else None
+            omega = [s.omega for s in self.states_list]
+            self._emission_distn.resample(data=data, mask=mask, omega=omega)
+
+        else:
+            for state, d in enumerate(self.emission_distns):
+                data = [(np.hstack((s.gaussian_states[s.stateseq == state],
+                                    s.inputs[s.stateseq == state])),
+                         s.data[s.stateseq == state])
+                        for s in self.states_list]
+                mask = [s.mask[s.stateseq == state] for s in self.states_list] \
+                    if self.has_missing_data else None
+                omega = [s.omega[s.stateseq == state] for s in self.states_list]
+                d.resample(data=data, mask=mask, omega=omega)
+
+        self._clear_caches()
+
+
+class HMMCountSLDSPython(_CountSLDSMixin, pyhsmm.models.HMMPython):
+    _states_class = HMMCountSLDSStatesPython
+
+
+class HMMCountSLDS(_CountSLDSMixin, pyhsmm.models.HMM):
+    _states_class = HMMCountSLDSStatesEigen
+
+
+class HSMMCountSLDSPython(_CountSLDSMixin, pyhsmm.models.HSMMPython):
+    _states_class = HSMMCountSLDSStatesPython
+
+
+class HSMMCountSLDS(_CountSLDSMixin, pyhsmm.models.HSMM):
+    _states_class = HSMMCountSLDSStatesEigen
+
+
+class WeakLimitHDPHMMCountSLDS(_CountSLDSMixin, pyhsmm.models.WeakLimitHDPHMM):
+    _states_class = HMMCountSLDSStatesEigen
+
+
+class WeakLimitStickyHDPHMMCountSLDS(
+    _CountSLDSMixin, pyhsmm.models.WeakLimitStickyHDPHMM):
+    _states_class = HMMCountSLDSStatesEigen
+
+
+class WeakLimitHDPHSMMCountSLDS(
+    _CountSLDSMixin, pyhsmm.models.WeakLimitHDPHSMM):
+    _states_class = HSMMCountSLDSStatesEigen

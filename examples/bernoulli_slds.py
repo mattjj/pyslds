@@ -8,7 +8,7 @@ from pybasicbayes.distributions import Regression, Gaussian
 from pybasicbayes.util.text import progprint_xrange
 
 from pypolyagamma.distributions import BernoulliRegression
-from pyslds.models import HMMSLDS, WeakLimitStickyHDPHMMSLDS
+from pyslds.models import HMMCountSLDS, WeakLimitStickyHDPHMMCountSLDS
 
 npr.seed(0)
 cmap = "jet"
@@ -39,7 +39,7 @@ init_dynamics_distns = [Gaussian(mu=mu_init, sigma=sigma_init) for _ in range(K)
 dynamics_distns = [Regression(A=A, sigma=0.01*np.eye(D_latent)) for A in As]
 emission_distns = BernoulliRegression(D_obs, D_latent, A=C, b=b)
 
-truemodel = HMMSLDS(
+truemodel = HMMCountSLDS(
     dynamics_distns=dynamics_distns,
     emission_distns=emission_distns,
     init_dynamics_distns=init_dynamics_distns,
@@ -66,7 +66,7 @@ statesobj.mask = mask
 truemodel.states_list.append(statesobj)
 
 ### Make a model
-model = WeakLimitStickyHDPHMMSLDS(
+model = WeakLimitStickyHDPHMMCountSLDS(
     init_dynamics_distns=
         [Gaussian(
             nu_0=5, sigma_0=3.*np.eye(D_latent),

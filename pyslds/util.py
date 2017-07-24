@@ -1,6 +1,7 @@
 import numpy as np
 
-from pybasicbayes.distributions.regression import AutoRegression
+from pybasicbayes.distributions import AutoRegression, DiagonalRegression, Regression
+
 
 def get_empirical_ar_params(train_datas, params):
     """
@@ -84,7 +85,18 @@ def expected_gaussian_logprob(mu, sigma, stats):
     return out
 
 
-def expected_regression_log_prob(A, Sigma, stats):
+def expected_regression_log_prob(regression, stats):
+    if isinstance(regression, DiagonalRegression):
+        return expected_diag_regression_log_prob(
+            regression.A, regression.sigmasq_flat, stats)
+    elif isinstance(regression, Regression):
+        return expected_dense_regression_log_prob(
+            regression.A, regression.sigma, stats)
+    else:
+        raise Exception("Unrecognized regression object! {}".format(regression))
+
+
+def expected_dense_regression_log_prob(A, Sigma, stats):
     """
     Expected log likelihood of p(y | x) where
 
@@ -114,6 +126,56 @@ def expected_regression_log_prob(A, Sigma, stats):
     return out
 
 
+def expected_diag_regression_log_prob(A, sigmasq, stats):
+    """
+    Expected log likelihood of p(y | x) where
+
+        y_{n,d} ~ N(a_d^\trans x_n, sigma_d^2)
+
+    and expectation is wrt q(y,x).  We only need expected
+    sufficient statistics E[yy.T], E[yx.T], E[xx.T], and n,
+    where n is the number of observations.
+
+    :param A:      regression matrix
+    :param sigma:  diagonal observation variance
+    :param stats:  tuple (E[yy.T], E[yx.T], E[xx.T], mask)
+    :return:       E[log p(y | x)]
+    """
+    D_out, D_in = A.shape
+    assert sigmasq.shape == (D_out,)
+
+    ysq, yxT, xxT, mask = stats[-4:]
+    T = ysq.shape[0]
+    assert ysq.shape == (T, D_out)
+    assert yxT.shape == (T, D_out, D_in)
+
+    # xxT has different shapes depending on whether or not data is missing
+    # with missing data, it is (T, Dout, Din, Din) since we need to mask
+    # off certain xxT pairs.  If there's no mask, it's always the same for
+    # every output dimension.  To make it easy, we just broadcast along
+    # the Dout dimension for the no-missing-data case.
+    if xxT.shape == (T, D_in, D_in):
+        xxT = xxT[:,None,:,:]
+    else:
+        assert xxT.shape == (T, D_out, D_in, D_in)
+
+    assert mask.shape == (T, D_out)
+
+    AAT = np.array([np.outer(a, a) for a in A])
+    n = mask.sum(1)
+
+    J_node = AAT[None, :, :, :] / sigmasq[None, :, None, None]
+    h_node = (mask / sigmasq)[:,:,None] * A[None, :, :]
+
+    out = -1 / 2. * np.sum(J_node * xxT, axis=(1, 2, 3))
+    out += np.sum(h_node * yxT, axis=(1, 2))
+    out += -1 / 2. * np.sum(mask / sigmasq * ysq, axis=1)
+    out += -n / 2. * np.log(2 * np.pi)
+    out += -1 / 2. * np.sum(mask * np.log(sigmasq), axis=1)
+    assert out.shape == (T,)
+    return out
+
+
 def lds_entropy(info_params, stats):
     # Extract the info params that make up the variational factor
     J_init, h_init, log_Z_init, \
@@ -139,8 +201,9 @@ def lds_entropy(info_params, stats):
     nep += np.sum(h_pair_2 * E_x[1:])
     nep += np.sum(log_Z_pair)
 
-    # Node potentials
-    nep += -1. / 2 * np.einsum(contract, J_node, E_x_xT)
+    # Node potentials -- with single emission, J_node is 2D
+    nep += -1. / 2 * np.einsum(
+        'tij,tji->' if J_node.ndim == 3 else 'ij,tji->', J_node, E_x_xT)
     nep += np.sum(h_node * E_x)
     nep += np.sum(log_Z_node)
 
@@ -207,21 +270,24 @@ def regression_map_estimation(stats, regression):
     D_out = regression.D_out
 
     # Add prior and likelihood statistics
-    sum_tuples = lambda lst: list(map(sum, zip(*lst)))
-    yyT, yxT, xxT, n = sum_tuples([stats, regression.natural_hypparam])
+    if isinstance(regression, DiagonalRegression):
+        regression.max_likelihood(data=None, stats=stats)
+    else:
+        sum_tuples = lambda lst: list(map(sum, zip(*lst)))
+        yyT, yxT, xxT, n = sum_tuples([stats, regression.natural_hypparam])
 
-    A = np.linalg.solve(xxT, yxT.T).T
-    sigma = (yyT - A.dot(yxT.T)) / n
+        A = np.linalg.solve(xxT, yxT.T).T
+        sigma = (yyT - A.dot(yxT.T)) / n
 
-    # Make sure sigma is symmetric
-    symmetrize = lambda A: (A + A.T) / 2.
-    sigma = 1e-10 * np.eye(D_out) + symmetrize(sigma)
+        # Make sure sigma is symmetric
+        symmetrize = lambda A: (A + A.T) / 2.
+        sigma = 1e-10 * np.eye(D_out) + symmetrize(sigma)
 
-    regression.A = A
-    regression.sigma = sigma
+        regression.A = A
+        regression.sigma = sigma
 
 
-def niw_logprob(gaussian):
+def gaussian_logprior(gaussian):
     D = gaussian.D
     mu, sigma = gaussian.mu, gaussian.sigma
     mu_0, sigma_0, kappa_0, nu_0 = \
@@ -244,7 +310,30 @@ def niw_logprob(gaussian):
     return lp
 
 
-def mniw_logprob(regression):
+def regression_logprior(regression):
+    if isinstance(regression, DiagonalRegression):
+        return diag_regression_logprior(regression)
+    elif isinstance(regression, Regression):
+        return dense_regression_logprior(regression)
+
+
+def diag_regression_logprior(regression):
+    from scipy.stats import multivariate_normal, gamma
+    A = regression.A
+    sigmasq = regression.sigmasq_flat
+    J, h, alpha, beta = \
+        regression.J_0, regression.h_0, regression.alpha_0, regression.beta_0
+    Sigma = np.linalg.inv(J)
+    mu = Sigma.dot(h)
+
+    lp = 0
+    for d in range(regression.D_out):
+        lp += multivariate_normal(mu, Sigma).logpdf(A[d])
+        lp += gamma(alpha, scale=1./beta).logpdf(1. / sigmasq[d])
+    return lp
+
+
+def dense_regression_logprior(regression):
     A = regression.A
     Sigmainv = np.linalg.inv(regression.sigma)
     Sigmainv_A = Sigmainv.dot(A)

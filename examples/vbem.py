@@ -1,12 +1,17 @@
 from __future__ import division
 import numpy as np
+import numpy.random as npr
 import matplotlib.pyplot as plt
 
 from pyhsmm.basic.distributions import PoissonDuration
+
+from autoregressive.models import ARHSMM
 from autoregressive.distributions import AutoRegression
 from pyhsmm.util.text import progprint_xrange
 
-from pyslds.models import DefaultSLDS
+from pybasicbayes.distributions import DiagonalRegression, Gaussian, Regression
+
+from pyslds.models import HMMSLDS
 
 np.random.seed(0)
 
@@ -14,43 +19,60 @@ np.random.seed(0)
 ###################
 #  generate data  #
 ###################
-
-import autoregressive
+T = 1000
+Kmax = 10       # number of latent discrete states
+D_latent = 2    # latent linear dynamics' dimension
+D_input = 1     # latent linear dynamics' dimension
+D_obs = 2       # data dimension
+N_iter = 200    # number of VBEM iterations
 
 As = [np.array([[np.cos(theta), -np.sin(theta)],
                 [np.sin(theta), np.cos(theta)]])
       for alpha, theta in ((0.95,0.1), (0.95,-0.1), (1., 0.))]
 
-truemodel = autoregressive.models.ARHSMM(
-    alpha=4.,init_state_concentration=4.,
-    obs_distns=[AutoRegression(A=A,sigma=0.05*np.eye(2)) for A in As],
-    dur_distns=[PoissonDuration(alpha_0=3*50,beta_0=3) for _ in As])
+truemodel = ARHSMM(
+    alpha=4., init_state_concentration=4.,
+    obs_distns=[AutoRegression(A=A, sigma=0.05*np.eye(2)) for A in As],
+    dur_distns=[PoissonDuration(alpha_0=3*50, beta_0=3) for _ in As])
 
-truemodel.prefix = np.array([[0.,3.]])
-data, labels = truemodel.generate(1000)
+truemodel.prefix = np.array([[0., 3.]])
+data, labels = truemodel.generate(T)
 data = data[truemodel.nlags:]
 
 plt.figure()
-plt.plot(data[:,0],data[:,1],'bx-')
+plt.plot(data[:,0], data[:,1], 'x-')
 
 
 #################
 #  build model  #
 #################
-
-Kmax = 10       # number of latent discrete states
-D_latent = 2    # latent linear dynamics' dimension
-D_obs = 2       # data dimension
-N_iter = 100    # number of VBEM iterations
-
 Cs = [np.eye(D_obs) for _ in range(Kmax)]                   # Shared emission matrices
 sigma_obss = [0.05 * np.eye(D_obs) for _ in range(Kmax)]    # Emission noise covariances
 
-model = DefaultSLDS(
-    K=Kmax, D_obs=D_obs, D_latent=D_latent,
-    Cs=Cs, sigma_obss=sigma_obss)
+model = HMMSLDS(
+    init_dynamics_distns=
+        [Gaussian(
+            nu_0=5, sigma_0=3.*np.eye(D_latent),
+            mu_0=np.zeros(D_latent), kappa_0=0.01,
+            mu=np.zeros(D_latent), sigma=np.eye(D_latent)
+        ) for _ in range(Kmax)],
+    dynamics_distns=
+        [Regression(
+            A=np.hstack((np.eye(D_latent), np.zeros((D_latent, D_input)))),
+            sigma=np.eye(D_latent),
+            nu_0=D_latent+3,
+            S_0=D_latent*np.eye(D_latent),
+            M_0=np.hstack((np.eye(D_latent), np.zeros((D_latent, D_input)))),
+            K_0=D_latent*np.eye(D_latent + D_input),
+        ) for _ in range(Kmax)],
+    emission_distns=
+        DiagonalRegression(
+            D_obs, D_latent + D_input,
+            alpha_0=2.0, beta_0=1.0,
+        ),
+    alpha=3., init_state_distn='uniform')
 
-model.add_data(data)
+model.add_data(data, inputs=np.ones((T, D_input)))
 model.resample_states()
 
 for _ in progprint_xrange(0):
