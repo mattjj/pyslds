@@ -134,9 +134,8 @@ class _SLDSGibbsMixin(_SLDSMixin):
     ### joblib parallel
 
     def _joblib_resample_states(self,states_list,num_procs):
-        # TODO: Update to handle inputs
         from joblib import Parallel, delayed
-        import parallel
+        import pyslds.parallel as parallel
 
         if len(states_list) > 0:
             joblib_args = list(map(self._get_joblib_pair, states_list))
