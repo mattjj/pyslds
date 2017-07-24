@@ -11,7 +11,7 @@ import autoregressive
 from pyhsmm.basic.distributions import PoissonDuration
 from pybasicbayes.distributions import AutoRegression
 
-from pyslds.models import DefaultWeakLimitStickyHDPSLDS, DefaultSLDS
+from pyslds.models import DefaultSLDS
 
 
 ###################
@@ -22,16 +22,16 @@ As = [np.array([[np.cos(theta), -np.sin(theta)],
       for alpha, theta in ((0.95,0.1), (0.95,-0.1), (1., 0.))]
 
 truemodel = autoregressive.models.ARHSMM(
-    alpha=4.,init_state_concentration=4.,
-    obs_distns=[AutoRegression(A=A,sigma=0.05*np.eye(2)) for A in As],
-    dur_distns=[PoissonDuration(alpha_0=5*50,beta_0=5) for _ in As])
+    alpha=4., init_state_concentration=4.,
+    obs_distns=[AutoRegression(A=A, sigma=0.05*np.eye(2)) for A in As],
+    dur_distns=[PoissonDuration(alpha_0=5*50, beta_0=5) for _ in As])
 
 truemodel.prefix = np.array([[0.,3.]])
 data, labels = truemodel.generate(1000)
 data = data[truemodel.nlags:]
 
 plt.figure()
-plt.plot(data[:,0],data[:,1],'bx-')
+plt.plot(data[:,0],data[:,1],'x-')
 plt.xlabel("$y_1$")
 plt.ylabel("$y_2$")
 
@@ -45,10 +45,6 @@ D_obs = 2                           # data dimension
 
 Cs = np.eye(D_obs)                  # Shared emission matrix
 sigma_obss = 0.05 * np.eye(D_obs)   # Emission noise covariance
-
-# model = DefaultWeakLimitStickyHDPSLDS(
-#     K=Kmax, D_obs=D_obs, D_latent=D_latent, kappa=100.,
-#     Cs=Cs, sigma_obss=sigma_obss)
 
 model = DefaultSLDS(
     K=Kmax, D_obs=D_obs, D_latent=D_latent,
