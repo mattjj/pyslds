@@ -542,8 +542,6 @@ class _SLDSStatesVBEM(_SLDSStates):
             vbem_aBl[0, k] = expected_gaussian_logprob(id.mu, id.sigma, self.E_init_stats)
             vbem_aBl[:-1, k] += expected_regression_log_prob(dd, self.E_dynamics_stats)
 
-        assert np.all(abs(vbem_aBl) < 1e8)
-
         if self.single_emission:
             ed = self.emission_distns[0]
             vbem_aBl += expected_regression_log_prob(ed, self.E_emission_stats)[:,None]
@@ -551,7 +549,6 @@ class _SLDSStatesVBEM(_SLDSStates):
             for k, ed in enumerate(self.emission_distns):
                 vbem_aBl[:, k] += expected_regression_log_prob(ed, self.E_emission_stats)
 
-        assert np.all(abs(vbem_aBl) < 1e8)
         vbem_aBl[np.isnan(vbem_aBl).any(1)] = 0.
         return vbem_aBl
 
@@ -577,7 +574,6 @@ class _SLDSStatesVBEM(_SLDSStates):
 
         # Set the gaussian states to smoothed mus
         self.gaussian_states = self.smoothed_mus
-        assert np.all(abs(self.smoothed_mus) < 1e3)
         self._aBl = 0
 
         # Compute the variational entropy
@@ -729,6 +725,9 @@ class _SLDSStatesMeanField(_SLDSStates):
     def meanfield_update_discrete_states(self):
         super(_SLDSStatesMeanField, self).meanfieldupdate()
 
+        # Save the states
+        self.stateseq = np.argmax(self.expected_states, axis=1)
+
         # Compute the variational entropy
         return hmm_entropy(self._mf_param_snapshot, self.all_expected_stats)
 
@@ -739,6 +738,9 @@ class _SLDSStatesMeanField(_SLDSStates):
         stats = info_E_step(*self.expected_info_params)
         self._lds_normalizer, self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT = stats
         self._set_gaussian_expected_stats(self.smoothed_mus, self.smoothed_sigmas, E_xtp1_xtT)
+
+        # Save the states
+        self.gaussian_states = self.smoothed_mus.copy()
 
         # Compute the variational entropy
         return lds_entropy(info_params, stats)
@@ -780,7 +782,22 @@ class _SLDSStatesMeanField(_SLDSStates):
             return np.array([C.dot(mu) for C, mu in zip(ECs, self.smoothed_mus)])
 
 
-class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM):
+class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM, _SLDSStatesMeanField):
+    """
+    This mixin allows arbitrary patterns of missing data.  Currently,
+    we only support the simplest case in which the observation noise
+    has diagonal covariance, such that,
+
+        y_{t,n} ~ N(c_n \dot x_t,  \sigma^2_n).
+
+    In this case, missing data corresponds to fewer emission potentials.
+
+    The missing data can either be indicated by NaN's in the data or by
+    an explicit, Boolean mask passed to the constructor.  The mixin works
+    by overriding the info_emission_parameters and the corresponding
+    emission likelihoods.  If no mask is present, it passes through
+    to the base mixings (Gibbs, VBEM, MeanField).
+    """
     def __init__(self, model, data=None, mask=None, **kwargs):
         if mask is not None:
             # assert mask.shape == data.shape
@@ -803,6 +820,7 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM):
         if self.mask is not None and not self.diagonal_noise:
             raise Exception("PySLDS only supports diagonal observation noise with masked data")
 
+    ### Gibbs
     @property
     def info_emission_params(self):
         if self.mask is None:
@@ -845,48 +863,6 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM):
         return J_node, h_node, log_Z_node
 
     @property
-    def vbem_info_emission_params(self):
-        if self.mask is None:
-            return super(_SLDSStatesMaskedData, self).vbem_info_emission_params
-
-        # Otherwise, compute masked potentials
-        expand = lambda a: a[None, ...]
-        stack_set = lambda x: np.concatenate(list(map(expand, x)))
-
-        sigmasq_inv_set = stack_set([1. / d.sigmasq_flat for d in self.emission_distns])
-        C_set = [d.A[:, :self.D_latent] for d in self.emission_distns]
-        D_set = stack_set([d.A[:, self.D_latent:] for d in self.emission_distns])
-        CCT_set = stack_set(
-            [np.array([np.outer(cp, cp) for cp in C]).
-                 reshape((self.D_emission, self.D_latent ** 2)) for C in C_set])
-
-        # import ipdb; ipdb.set_trace()
-        # Compute expectations wrt q(z)
-        if self.single_emission:
-            sigmasq_inv = sigmasq_inv_set[0]
-            C = C_set[0]
-            D = D_set[0]
-            CCT = CCT_set[0]
-        else:
-            E_z = self.expected_states
-            sigmasq_inv = np.tensordot(E_z, sigmasq_inv_set, axes=1)
-            C = np.tensordot(E_z, C_set, axes=1)
-            D = np.tensordot(E_z, D_set, axes=1)
-            CCT = np.tensordot(E_z, CCT_set, axes=1)
-
-        # Finally, we can compute the emission potential with the mask
-        T, D_latent, data, inputs, mask = self.T, self.D_latent, self.data, self.inputs, self.mask
-        centered_data = data - inputs.dot(np.swapaxes(D, -2, -1))
-        J_node = np.dot(mask * sigmasq_inv, CCT).reshape((T, D_latent, D_latent))
-        h_node = (mask * centered_data * sigmasq_inv).dot(C)
-
-        log_Z_node = -mask.sum(1) / 2. * np.log(2 * np.pi)
-        log_Z_node += 1. / 2 * np.sum(mask * np.log(sigmasq_inv), axis=1)
-        log_Z_node += -1. / 2 * np.sum(mask * centered_data ** 2 * sigmasq_inv, axis=1)
-
-        return J_node, h_node, log_Z_node
-
-    @property
     def aBl(self):
         if self.mask is None:
             return super(_SLDSStatesMaskedData, self).aBl
@@ -917,6 +893,97 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM):
 
         return self._aBl
 
+    ### VBEM
+    @property
+    def vbem_info_emission_params(self):
+        if self.mask is None:
+            return super(_SLDSStatesMaskedData, self).vbem_info_emission_params
+
+        # Otherwise, compute masked potentials
+        expand = lambda a: a[None, ...]
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
+
+        sigmasq_inv_set = stack_set([1. / d.sigmasq_flat for d in self.emission_distns])
+        C_set = [d.A[:, :self.D_latent] for d in self.emission_distns]
+        D_set = stack_set([d.A[:, self.D_latent:] for d in self.emission_distns])
+        CCT_set = stack_set(
+            [np.array([np.outer(cp, cp) for cp in C]).
+                 reshape((self.D_emission, self.D_latent ** 2)) for C in C_set])
+
+        # Compute expectations wrt q(z)
+        if self.single_emission:
+            sigmasq_inv = sigmasq_inv_set[0]
+            C = C_set[0]
+            D = D_set[0]
+            CCT = CCT_set[0]
+        else:
+            E_z = self.expected_states
+            sigmasq_inv = np.tensordot(E_z, sigmasq_inv_set, axes=1)
+            C = np.tensordot(E_z, C_set, axes=1)
+            D = np.tensordot(E_z, D_set, axes=1)
+            CCT = np.tensordot(E_z, CCT_set, axes=1)
+
+        # Finally, we can compute the emission potential with the mask
+        T, D_latent, data, inputs, mask = self.T, self.D_latent, self.data, self.inputs, self.mask
+        centered_data = data - inputs.dot(np.swapaxes(D, -2, -1))
+        J_node = np.dot(mask * sigmasq_inv, CCT).reshape((T, D_latent, D_latent))
+        h_node = (mask * centered_data * sigmasq_inv).dot(C)
+
+        log_Z_node = -mask.sum(1) / 2. * np.log(2 * np.pi)
+        log_Z_node += 1. / 2 * np.sum(mask * np.log(sigmasq_inv), axis=1)
+        log_Z_node += -1. / 2 * np.sum(mask * centered_data ** 2 * sigmasq_inv, axis=1)
+
+        return J_node, h_node, log_Z_node
+
+    ### Mean field
+    @property
+    def expected_info_emission_params(self):
+        if self.mask is None:
+            return super(_SLDSStatesMaskedData, self).expected_info_emission_params
+
+        # Otherwise, compute masked potentials
+        expand = lambda a: a[None, ...]
+        stack_set = lambda x: np.concatenate(list(map(expand, x)))
+
+        # mf_expectations: mf_E_A, mf_E_AAT, mf_E_sigmasq_inv, mf_E_log_sigmasq
+        mf_stats = [ed.mf_expectations for ed in self.emission_distns]
+
+        n = self.D_latent
+        E_C_set = stack_set([s[0][:, :n] for s in mf_stats])
+        E_D_set = stack_set([s[0][:, n:] for s in mf_stats])
+        E_CCT_set = stack_set([s[1][:, :n, :n] for s in mf_stats])
+        E_sigmasq_inv_set = stack_set(s[2] for s in mf_stats)
+        E_log_sigmasq_inv_set = stack_set(s[3] for s in mf_stats)
+
+        # Compute expectations wrt q(z)
+        if self.single_emission:
+            E_C = E_C_set[0]
+            E_D = E_D_set[0]
+            E_CCT = E_CCT_set[0]
+            E_sigmasq_inv = E_sigmasq_inv_set[0]
+            E_log_sigmasq_inv = E_log_sigmasq_inv_set[0]
+        else:
+            E_z = self.expected_states
+            E_C = np.tensordot(E_z, E_C_set, axes=1)
+            E_D = np.tensordot(E_z, E_D_set, axes=1)
+            E_CCT = np.tensordot(E_z, E_CCT_set, axes=1)
+            E_sigmasq_inv = np.tensordot(E_z, E_sigmasq_inv_set, axes=1)
+            E_log_sigmasq_inv = np.tensordot(E_z, E_log_sigmasq_inv_set, axes=1)
+
+        # Finally, we can compute the emission potential with the mask
+        T, D_latent, data, inputs, mask = self.T, self.D_latent, self.data, self.inputs, self.mask
+        centered_data = data - inputs.dot(np.swapaxes(E_D, -2, -1))
+        J_node = np.tensordot(mask * E_sigmasq_inv, E_CCT, axes=1).\
+            reshape((T, D_latent, D_latent))
+        h_node = (mask * centered_data * E_sigmasq_inv).dot(E_C)
+
+        log_Z_node = -mask.sum(1) / 2. * np.log(2 * np.pi)
+        log_Z_node += 1. / 2 * np.sum(mask * E_log_sigmasq_inv, axis=1)
+        log_Z_node += -1. / 2 * np.sum(mask * centered_data ** 2 * E_sigmasq_inv, axis=1)
+
+        return J_node, h_node, log_Z_node
+
+    ### VBEM and Mean Field
     def _set_gaussian_expected_stats(self, smoothed_mus, smoothed_sigmas, E_xtp1_xtT):
         if self.mask is None:
             return super(_SLDSStatesMaskedData, self). \
@@ -950,7 +1017,6 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM):
         self.E_dynamics_stats = (E_xtp1_xtp1T, E_xtp1_xutT, E_xut_xutT, np.ones(self.T - 1))
 
         # Emission stats
-        # import ipdb; ipdb.set_trace()
         masked_data = self.data * self.mask
         E_yyT = masked_data ** 2
         E_yxT = masked_data[:, :, None] * self.smoothed_mus[:, None, :]

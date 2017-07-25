@@ -72,7 +72,7 @@ statesobj.mask = mask
 ###############
 #  make model #
 ###############
-model = WeakLimitStickyHDPHMMSLDS(
+model = HMMSLDS(
     init_dynamics_distns=
         [Gaussian(
             nu_0=5, sigma_0=3.*np.eye(D_latent),
@@ -91,9 +91,8 @@ model = WeakLimitStickyHDPHMMSLDS(
         DiagonalRegression(
             D_obs, D_latent,
             alpha_0=2.0, beta_0=1.0,
-            A=C.copy(), sigmasq=0.5*np.ones(D_obs),
         ),
-    alpha=3., gamma=3.0, kappa=1., init_state_distn='uniform')
+    alpha=3., init_state_distn='uniform')
 model.add_data(data=data, mask=mask)
 
 ###############
@@ -104,16 +103,16 @@ for _ in progprint_xrange(N_init_samples):
     model.resample_model()
 model._init_mf_from_gibbs()
 
-
-N_iters = 500
-def gibbs_update(model):
+N_iters = 100
+def update(model):
     model.VBEM_step()
-    smoothed_obs = model.states_list[0].smooth()
+    # model.meanfield_coordinate_descent_step()
     lp = model.log_likelihood()
+    smoothed_obs = model.states_list[0].smooth()
     return lp, model.stateseqs[0], smoothed_obs
 
-# Gibbs
-lls, z_smpls, smoothed_obss = zip(*[gibbs_update(model) for _ in progprint_xrange(N_iters)])
+# Fit the model
+lls, z_smpls, smoothed_obss = zip(*[update(model) for _ in progprint_xrange(N_iters)])
 
 ################
 # likelihoods  #
