@@ -120,34 +120,59 @@ class _SLDSStates(object):
         return self.init_dynamics_distns[self.stateseq[0]].sigma
 
     @property
+    def A_set(self):
+        return np.concatenate([d.A[None, :, :self.D_latent] for d in self.dynamics_distns])
+
+    @property
     def As(self):
-        Aset = np.concatenate([d.A[None,:,:self.D_latent] for d in self.dynamics_distns])
-        return Aset[self.stateseq]
+        return self.A_set[self.stateseq]
+
+    @property
+    def B_set(self):
+        return np.concatenate([d.A[None, :, self.D_latent:] for d in self.dynamics_distns])
 
     @property
     def Bs(self):
-        Bset = np.concatenate([d.A[None,:,self.D_latent:] for d in self.dynamics_distns])
-        return Bset[self.stateseq]
+        return self.B_set[self.stateseq]
+
+    @property
+    def Q_set(self):
+        return np.concatenate([d.sigma[None,...] for d in self.dynamics_distns])
 
     @property
     def sigma_statess(self):
-        sset = np.concatenate([d.sigma[None,...] for d in self.dynamics_distns])
-        return sset[self.stateseq]
+        return self.Q_set[self.stateseq]
+
+    @property
+    def C_set(self):
+        return np.concatenate([d.A[None,:,:self.D_latent] for d in self.emission_distns])
 
     @property
     def Cs(self):
-        Cset = np.concatenate([d.A[None,:,:self.D_latent] for d in self.emission_distns])
-        return Cset[self.stateseq]
+        return self.C_set[self.stateseq]
+
+    @property
+    def D_set(self):
+        return np.concatenate([d.A[None, :, self.D_latent:] for d in self.emission_distns])
 
     @property
     def Ds(self):
-        Dset = np.concatenate([d.A[None, :, self.D_latent:] for d in self.emission_distns])
-        return Dset[self.stateseq]
+        return self.D_set[self.stateseq]
+
+    @property
+    def R_set(self):
+        return np.concatenate([d.sigma[None,...] for d in self.emission_distns])
+
+    @property
+    def Rinv_set(self):
+        if self.diagonal_noise:
+            return np.concatenate([np.diag(1. / d.sigmasq_flat)[None,...] for d in self.emission_distns])
+        else:
+            return np.concatenate([np.linalg.inv(d.sigma)[None,...] for d in self.emission_distns])
 
     @property
     def sigma_obss(self):
-        sset = np.concatenate([d.sigma[None,...] for d in self.emission_distns])
-        return sset[self.stateseq]
+        return self.R_set[self.stateseq]
 
     @property
     def _kwargs(self):
@@ -172,9 +197,7 @@ class _SLDSStates(object):
         expand = lambda a: a[None,...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-        A_set = [d.A[:,:self.D_latent] for d in self.dynamics_distns]
-        B_set = [d.A[:,self.D_latent:] for d in self.dynamics_distns]
-        Q_set = [d.sigma for d in self.dynamics_distns]
+        A_set, B_set, Q_set = self.A_set, self.B_set, self.Q_set
 
         # Get the pairwise potentials
         J_pair_22_set = [np.linalg.inv(Q) for Q in Q_set]
@@ -214,11 +237,7 @@ class _SLDSStates(object):
         expand = lambda a: a[None,...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-        get_Ri = lambda ed: np.diag(1. / ed.sigmasq_flat) \
-            if self.diagonal_noise else np.linalg.inv(ed.sigma)
-        C_set = [d.A[:,:self.D_latent] for d in self.emission_distns]
-        D_set = [d.A[:,self.D_latent:] for d in self.emission_distns]
-        Ri_set = [get_Ri(d) for d in self.emission_distns]
+        C_set, D_set, Ri_set = self.C_set, self.D_set, self.Rinv_set
         RiC_set = [Ri.dot(C) for C,Ri in zip(C_set, Ri_set)]
         RiD_set = [Ri.dot(D) for D,Ri in zip(D_set, Ri_set)]
         CRiC_set = [C.T.dot(RiC) for C,RiC in zip(C_set, RiC_set)]
@@ -428,9 +447,7 @@ class _SLDSStatesVBEM(_SLDSStates):
         expand = lambda a: a[None, ...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-        A_set = [d.A[:, :self.D_latent] for d in self.dynamics_distns]
-        B_set = [d.A[:, self.D_latent:] for d in self.dynamics_distns]
-        Q_set = [d.sigma for d in self.dynamics_distns]
+        A_set, B_set, Q_set = self.A_set, self.B_set, self.Q_set
 
         # Get the pairwise potentials
         J_pair_22_set = stack_set([np.linalg.inv(Q) for Q in Q_set])
@@ -472,11 +489,7 @@ class _SLDSStatesVBEM(_SLDSStates):
         expand = lambda a: a[None, ...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-        get_Ri = lambda ed: np.diag(1. / ed.sigmasq_flat) \
-            if self.diagonal_noise else np.linalg.inv(ed.sigma)
-        C_set = stack_set([d.A[:, :self.D_latent] for d in self.emission_distns])
-        D_set = stack_set([d.A[:, self.D_latent:] for d in self.emission_distns])
-        Ri_set = stack_set([get_Ri(d) for d in self.emission_distns])
+        C_set, D_set, Ri_set = self.C_set, self.D_set, self.Rinv_set
         RiC_set = stack_set([Ri.dot(C) for C, Ri in zip(C_set, Ri_set)])
         RiD_set = stack_set([Ri.dot(D) for D, Ri in zip(D_set, Ri_set)])
         CRiC_set = stack_set([C.T.dot(RiC) for C, RiC in zip(C_set, RiC_set)])
@@ -830,9 +843,8 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM, _SLDSStatesMeanFi
         expand = lambda a: a[None, ...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-        sigmasq_inv_set = stack_set([1. / d.sigmasq_flat for d in self.emission_distns])
-        C_set = [d.A[:, :self.D_latent] for d in self.emission_distns]
-        D_set = stack_set([d.A[:, self.D_latent:] for d in self.emission_distns])
+        C_set, D_set = self.C_set, self.D_set
+        sigmasq_inv_set = [np.diag(Ri) for Ri in self.Rinv_set]
         CCT_set = stack_set(
             [np.array([np.outer(cp, cp) for cp in C]).
                  reshape((self.D_emission, self.D_latent ** 2)) for C in C_set])
@@ -903,9 +915,8 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM, _SLDSStatesMeanFi
         expand = lambda a: a[None, ...]
         stack_set = lambda x: np.concatenate(list(map(expand, x)))
 
-        sigmasq_inv_set = stack_set([1. / d.sigmasq_flat for d in self.emission_distns])
-        C_set = [d.A[:, :self.D_latent] for d in self.emission_distns]
-        D_set = stack_set([d.A[:, self.D_latent:] for d in self.emission_distns])
+        C_set, D_set = self.C_set, self.D_set
+        sigmasq_inv_set = [np.diag(Ri) for Ri in self.Rinv_set]
         CCT_set = stack_set(
             [np.array([np.outer(cp, cp) for cp in C]).
                  reshape((self.D_emission, self.D_latent ** 2)) for C in C_set])
