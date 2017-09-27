@@ -25,11 +25,13 @@ class _SLDSStates(object):
         # store gaussian states and state sequence if passed in
         if gaussian_states is not None and stateseq is not None:
             self.gaussian_states = gaussian_states
-            self.stateseq = np.array(stateseq,dtype=np.int32)
+            self.stateseq = np.array(stateseq, dtype=np.int32)
             if data is not None and not initialize_from_prior:
                 self.resample()
 
-        elif stateseq is not None:
+        elif stateseq is not None or gaussian_states is not None:
+            raise Exception("Must specify gaussian states and discrete states if "
+                            "you want to initialize with given latent states.")
             self.stateseq = np.array(stateseq,dtype=np.int32)
             self.generate_gaussian_states()
 
@@ -39,26 +41,71 @@ class _SLDSStates(object):
             else:
                 self.generate_states()
 
-    def generate_states(self):
-        super(_SLDSStates,self).generate_states()
-        self.generate_gaussian_states()
+    # def generate_states(self, initial_condition=None, with_noise=True):
+    #     super(_SLDSStates,self).generate_states()
+    #     self.generate_gaussian_states(with_noise=with_noise)
+    #
+    # def generate_gaussian_states(self, with_noise=True):
+    #     # Generate from the prior and raise exception if unstable
+    #     T, n = self.T, self.D_latent
+    #
+    #     # The discrete stateseq should be populated by the super call above
+    #     dss = self.stateseq
+    #
+    #     gss = np.empty((T,n),dtype='double')
+    #     gss[0] = self.init_dynamics_distns[dss[0]].rvs()
+    #
+    #     for t in range(1,T):
+    #         if with_noise:
+    #             gss[t] = self.dynamics_distns[dss[t-1]].\
+    #                 rvs(x=np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])),
+    #                     return_xy=False)
+    #         else:
+    #             gss[t] = self.dynamics_distns[dss[t-1]]. \
+    #                 predict(np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])))
+    #
+    #         assert np.all(np.isfinite(gss[t])), "SLDS appears to be unstable!"
+    #
+    #     self.gaussian_states = gss
 
-    def generate_gaussian_states(self):
+    def generate_states(self, initial_condition=None, with_noise=True):
+        """
+        Jointly sample the discrete and continuous states
+        """
+        from pybasicbayes.util.stats import sample_discrete
         # Generate from the prior and raise exception if unstable
-        T, n = self.T, self.D_latent
+        T, K, n = self.T, self.num_states, self.D_latent
+        A = self.trans_matrix
 
-        # The discrete stateseq should be populated by the super call above
-        dss = self.stateseq
+        # Initialize discrete state sequence
+        dss = np.empty(T, dtype=np.int32)
+        gss = np.empty((T,n), dtype='double')
 
-        gss = np.empty((T,n),dtype='double')
-        gss[0] = self.init_dynamics_distns[dss[0]].rvs()
+        if initial_condition is None:
+            init_state_distn = np.ones(self.num_states) / float(self.num_states)
+            dss[0] = sample_discrete(self.pi_0)
+            gss[0] = self.init_dynamics_distns[dss[0]].rvs()
+        else:
+            dss[0] = initial_condition[0]
+            gss[0] = initial_condition[1]
 
         for t in range(1,T):
-            gss[t] = self.dynamics_distns[dss[t]].\
-                rvs(x=np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])),
-                    return_xy=False)
+            # Sample discrete state given previous continuous state
+            if with_noise:
+                # Sample discrete state from recurrent transition matrix
+                dss[t] = sample_discrete(A[dss[t-1], :])
+                # Sample continuous state given current discrete state
+                gss[t] = self.dynamics_distns[dss[t-1]].\
+                    rvs(x=np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])),
+                        return_xy=False)
+            else:
+                # Pick the most likely next discrete state and continuous state
+                dss[t] = np.argmax(A[dss[t-1], :])
+                gss[t] = self.dynamics_distns[dss[t-1]]. \
+                    predict(np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])))
             assert np.all(np.isfinite(gss[t])), "SLDS appears to be unstable!"
 
+        self.stateseq = dss
         self.gaussian_states = gss
 
     def generate_obs(self):
@@ -832,6 +879,29 @@ class _SLDSStatesMaskedData(_SLDSStatesGibbs, _SLDSStatesVBEM, _SLDSStatesMeanFi
         # we do not currently support arbitrary masking with dense observation cov.
         if self.mask is not None and not self.diagonal_noise:
             raise Exception("PySLDS only supports diagonal observation noise with masked data")
+
+    def heldout_log_likelihood(self, test_mask=None):
+        """
+        Compute the log likelihood of the masked data given the latent
+        discrete and continuous states.
+        """
+        if test_mask is None:
+            # If a test mask is not supplied, use the negation of this object's mask
+            if self.mask is None:
+                return 0
+            else:
+                test_mask = ~self.mask
+
+        xs = np.hstack((self.gaussian_states, self.inputs))
+        if self.single_emission:
+            return self.emission_distns[0].\
+                log_likelihood((xs, self.data), mask=test_mask).sum()
+        else:
+            hll = 0
+            z = self.stateseq
+            for idx, ed in enumerate(self.emission_distns):
+                hll += ed.log_likelihood((xs[z == idx], self.data[z == idx]),
+                                         mask=test_mask[z == idx]).sum()
 
     ### Gibbs
     @property

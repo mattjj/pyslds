@@ -33,17 +33,13 @@ class _SLDSMixin(object):
         super(_SLDSMixin,self).__init__(
             obs_distns=self.dynamics_distns,**kwargs)
 
-    def generate(self, T=100, keep=True, **kwargs):
-        s = self._states_class(model=self, T=T,
-                               generate=True,
-                               initialize_from_prior=True,
-                               **kwargs)
-
+    def generate(self, T=100, keep=True, with_noise=True, initial_condition=None, **kwargs):
+        s = self._states_class(model=self, T=T, initialize_from_prior=True, **kwargs)
+        s.generate_states(with_noise=with_noise, initial_condition=initial_condition)
         data = self._generate_obs(s)
         if keep:
             self.states_list.append(s)
         return data + (s.stateseq,)
-
 
     def _generate_obs(self,s):
         if s.data is None:
@@ -66,6 +62,15 @@ class _SLDSMixin(object):
     @property
     def has_missing_data(self):
         return any([s.mask is not None for s in self.states_list])
+
+    def heldout_log_likelihood(self, test_masks=None):
+        test_masks = [None] * len(self.states_list) if test_masks is None else test_masks
+        assert len(test_masks) == len(self.states_list)
+
+        hll = 0
+        for mask, states in zip(test_masks, self.states_list):
+            hll += states.heldout_log_likelihood(test_mask=mask)
+        return hll
 
 
 class _SLDSGibbsMixin(_SLDSMixin):
@@ -214,6 +219,7 @@ class _SLDSVBEMMixin(_SLDSMixin):
 
     def VBEM_ELBO(self):
         # log p(theta)
+        # todo: include transition distribution and init state distribution!
         elbo = np.sum([gaussian_logprior(id) for id in self.init_dynamics_distns])
         elbo += np.sum([regression_logprior(dd) for dd in self.dynamics_distns])
 
