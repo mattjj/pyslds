@@ -10,7 +10,6 @@ from pylds.lds_messages_interface import info_E_step, info_sample
 
 from pyslds.util import hmm_entropy, lds_entropy, expected_regression_log_prob, expected_gaussian_logprob
 
-
 class _SLDSStates(object):
     def __init__(self,model,T=None,data=None,inputs=None,stateseq=None,gaussian_states=None,
             generate=True,initialize_from_prior=True,fixed_stateseq=None):
@@ -372,7 +371,8 @@ class _SLDSStates(object):
         if self.single_emission:
             return xu.dot(self.emission_distns[0].A.T)
         else:
-            return np.array([C.dot(x) for C, x in zip(self.Cs, xu)])
+            return np.array([C.dot(x) + D.dot(u) for C, D, x, u in
+                             zip(self.Cs, self.Ds, self.smoothed_mus, self.inputs)])
 
     def info_E_step(self):
         self._gaussian_normalizer, self.smoothed_mus, \
