@@ -25,49 +25,14 @@ class _SLDSStates(object):
         if gaussian_states is not None and stateseq is not None:
             self.gaussian_states = gaussian_states
             self.stateseq = np.array(stateseq, dtype=np.int32)
-            if data is not None and not initialize_from_prior:
-                self.resample()
-
-        elif stateseq is not None or gaussian_states is not None:
-            raise Exception("Must specify gaussian states and discrete states if "
-                            "you want to initialize with given latent states.")
-            self.stateseq = np.array(stateseq,dtype=np.int32)
-            self.generate_gaussian_states()
 
         elif generate:
-            if data is not None and not initialize_from_prior:
-                self.resample()
-            else:
-                self.generate_states()
+            self.generate_states(stateseq=stateseq)
 
-    # def generate_states(self, initial_condition=None, with_noise=True):
-    #     super(_SLDSStates,self).generate_states()
-    #     self.generate_gaussian_states(with_noise=with_noise)
-    #
-    # def generate_gaussian_states(self, with_noise=True):
-    #     # Generate from the prior and raise exception if unstable
-    #     T, n = self.T, self.D_latent
-    #
-    #     # The discrete stateseq should be populated by the super call above
-    #     dss = self.stateseq
-    #
-    #     gss = np.empty((T,n),dtype='double')
-    #     gss[0] = self.init_dynamics_distns[dss[0]].rvs()
-    #
-    #     for t in range(1,T):
-    #         if with_noise:
-    #             gss[t] = self.dynamics_distns[dss[t-1]].\
-    #                 rvs(x=np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])),
-    #                     return_xy=False)
-    #         else:
-    #             gss[t] = self.dynamics_distns[dss[t-1]]. \
-    #                 predict(np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])))
-    #
-    #         assert np.all(np.isfinite(gss[t])), "SLDS appears to be unstable!"
-    #
-    #     self.gaussian_states = gss
+        if data is not None and not initialize_from_prior:
+            self.resample()
 
-    def generate_states(self, initial_condition=None, with_noise=True):
+    def generate_states(self, initial_condition=None, with_noise=True, stateseq=None):
         """
         Jointly sample the discrete and continuous states
         """
@@ -77,12 +42,13 @@ class _SLDSStates(object):
         A = self.trans_matrix
 
         # Initialize discrete state sequence
-        dss = np.empty(T, dtype=np.int32)
+        dss = -1 * np.ones(T, dtype=np.int32) if stateseq is None else stateseq.astype(np.int32)
+        assert dss.shape == (T,)
         gss = np.empty((T,n), dtype='double')
 
         if initial_condition is None:
-            init_state_distn = np.ones(self.num_states) / float(self.num_states)
-            dss[0] = sample_discrete(self.pi_0)
+            if dss[0] == -1:
+                dss[0] = sample_discrete(self.pi_0)
             gss[0] = self.init_dynamics_distns[dss[0]].rvs()
         else:
             dss[0] = initial_condition[0]
@@ -91,15 +57,19 @@ class _SLDSStates(object):
         for t in range(1,T):
             # Sample discrete state given previous continuous state
             if with_noise:
-                # Sample discrete state from recurrent transition matrix
-                dss[t] = sample_discrete(A[dss[t-1], :])
+                # Sample discre=te state from recurrent transition matrix
+                if dss[t] == -1:
+                    dss[t] = sample_discrete(A[dss[t-1], :])
+
                 # Sample continuous state given current discrete state
                 gss[t] = self.dynamics_distns[dss[t-1]].\
                     rvs(x=np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])),
                         return_xy=False)
             else:
                 # Pick the most likely next discrete state and continuous state
-                dss[t] = np.argmax(A[dss[t-1], :])
+                if dss[t] == -1:
+                    dss[t] = np.argmax(A[dss[t-1], :])
+
                 gss[t] = self.dynamics_distns[dss[t-1]]. \
                     predict(np.hstack((gss[t-1][None,:], self.inputs[t-1][None,:])))
             assert np.all(np.isfinite(gss[t])), "SLDS appears to be unstable!"

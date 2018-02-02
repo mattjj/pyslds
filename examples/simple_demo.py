@@ -42,7 +42,7 @@ npr.seed(0)
 
 # Set parameters
 K = 5
-D_obs = 10
+D_obs = 100
 D_latent = 2
 D_input = 1
 T = 1000
@@ -50,12 +50,13 @@ T = 1000
 # Make an LDS with known parameters
 true_mu_inits = [np.ones(D_latent) for _ in range(K)]
 true_sigma_inits = [np.eye(D_latent) for _ in range(K)]
-true_As = [.99 * random_rotation(D_latent, theta=np.pi/((k+1) * 4)) for k in range(K)]
+true_As = [.9 * random_rotation(D_latent)
+           for k in range(K)]
 true_Bs = [3 * npr.randn(D_latent, D_input) for k in range(K)]
 true_sigma_states = [np.eye(D_latent) for _ in range(K)]
 true_C = np.random.randn(D_obs, D_latent)
 true_Ds = np.zeros((D_obs, D_input))
-true_sigma_obs = 0.05 * np.eye(D_obs)
+true_sigma_obs = np.eye(D_obs)
 true_model = DefaultSLDS(
     K, D_obs, D_latent, D_input=D_input,
     mu_inits=true_mu_inits, sigma_inits=true_sigma_inits,
@@ -65,7 +66,7 @@ true_model = DefaultSLDS(
 # Simulate some data with a given discrete state sequence
 inputs = np.ones((T, D_input))
 z = np.arange(K).repeat(T // K)
-y, x, _ = true_model.generate(T, inputs=inputs, stateseq=z)
+y, x, z = true_model.generate(T, inputs=inputs, stateseq=z)
 
 # Fit with another LDS.  Give it twice as many states in
 # order to have some flexibility during inference.
@@ -76,7 +77,7 @@ test_model.add_data(y, inputs=inputs)
 
 # Initialize with Gibbs sampler
 print("Initializing with Gibbs")
-N_gibbs_samples = 100
+N_gibbs_samples = 1000
 def initialize(model):
     model.resample_model()
     return model.log_likelihood()

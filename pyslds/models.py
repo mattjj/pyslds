@@ -33,9 +33,9 @@ class _SLDSMixin(object):
         super(_SLDSMixin,self).__init__(
             obs_distns=self.dynamics_distns,**kwargs)
 
-    def generate(self, T=100, keep=True, with_noise=True, initial_condition=None, **kwargs):
+    def generate(self, T=100, keep=True, with_noise=True, initial_condition=None, stateseq=None, **kwargs):
         s = self._states_class(model=self, T=T, initialize_from_prior=True, **kwargs)
-        s.generate_states(with_noise=with_noise, initial_condition=initial_condition)
+        s.generate_states(with_noise=with_noise, initial_condition=initial_condition, stateseq=stateseq)
         data = self._generate_obs(s)
         if keep:
             self.states_list.append(s)
