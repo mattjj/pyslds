@@ -95,7 +95,6 @@ def sample_slds_model():
     z = np.repeat(z, D)
 
     statesobj = slds._states_class(model=slds, T=z.size, stateseq=z)
-    statesobj.generate_gaussian_states()
     y = statesobj.data = statesobj.generate_obs()
     x = statesobj.gaussian_states
     slds.states_list.append(statesobj)
@@ -103,7 +102,7 @@ def sample_slds_model():
     return z,x,y,slds
 
 
-def draw_slds_figure(z, x, y):
+def draw_slds_figure(z, x, y, filename=None):
     fig = plt.figure(figsize=(5.5, 2.7))
     gs = gridspec.GridSpec(5, 1)
     ax = fig.add_subplot(gs[2:, 0])
@@ -183,9 +182,8 @@ def draw_slds_figure(z, x, y):
     ax.yaxis.labelpad = 34
     ax.set_ylabel("${\\mathbf{z}_t}$", rotation=0, verticalalignment='center')
 
-    # fig.savefig(filename + ".pdf")
-    # fig.savefig(filename+".pdf", **saveargs)
-    fig.savefig(filename+".png", **saveargs)
+    if filename is not None:
+        fig.savefig(filename, **saveargs)
 
     plt.show()
 
@@ -224,15 +222,12 @@ def plot_vector_field(k, A, b=None, n_pts=30, xmin=-5, xmax=5,
 
     ax.set_title(title, fontsize=10)
 
-    # fig.savefig(filename.format(k+1) + ".pdf")
-    # fig.savefig(filename.format(k+1) + ".png")
-
 if __name__ == "__main__":
     # Sample data
     z,x,y,slds = sample_slds_model()
 
     # Illustrative figure of SLDS
-    draw_slds_figure(z,x,y,slds)
+    draw_slds_figure(z,x,y)
 
     # Vector fields for latent states
     for k in range(K):
