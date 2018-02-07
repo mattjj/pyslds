@@ -1310,10 +1310,10 @@ class _SLDSStatesCountData(_SLDSStatesMaskedData, _SLDSStatesGibbs):
     ### VBEM
     @property
     def vbem_info_emission_params(self):
-        raise NotImplementedError("VBEM not implemented for Pólya-gamma augmented states.")
+        raise NotImplementedError("VBEM not implemented for Polya-gamma augmented states.")
 
     def vb_E_step(self):
-        raise NotImplementedError("VBEM not implemented for Pólya-gamma augmented states.")
+        raise NotImplementedError("VBEM not implemented for Polya-gamma augmented states.")
 
 
 
