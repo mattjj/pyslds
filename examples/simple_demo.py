@@ -91,7 +91,7 @@ def update(model):
     model.VBEM_step()
     return model.log_likelihood()
 
-test_model.states_list[0]._init_mf_from_gibbs()
+test_model._init_mf_from_gibbs()
 vbem_lls = [update(test_model) for _ in progprint_xrange(N_vbem_iters)]
 
 # Plot the log likelihoods

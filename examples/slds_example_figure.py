@@ -42,7 +42,7 @@ D = 50
 n = T // D
 
 # SLDS
-K, D_obs, D_latent = 5, 8, 2
+K, D_obs, D_latent = 4, 8, 2
 
 
 def sample_slds_model():
@@ -69,16 +69,18 @@ def sample_slds_model():
     ths = np.linspace(0, np.pi/8., K)
     As = [random_rotation(D_latent, ths[k]) for k in range(K)]
     # As = [random_dynamics(D_latent) for k in range(K)]
+    bs = [np.zeros((D_latent, 1))] + [.25 * np.random.randn(D_latent, 1) for k in range(K-1)]
 
     C = np.random.randn(D_obs, D_latent)
+    d = np.zeros((D_obs, 1))
     sigma_obs = 0.5 * np.ones(D_obs)
 
     ###################
     #  generate data  #
     ###################
     init_dynamics_distns = [Gaussian(mu=mu_init, sigma=sigma_init) for _ in range(K)]
-    dynamics_distns = [Regression(A=A, sigma=0.01 * np.eye(D_latent)) for A in As]
-    emission_distns = DiagonalRegression(D_obs, D_latent, A=C, sigmasq=sigma_obs)
+    dynamics_distns = [Regression(A=np.hstack((A, b)), sigma=0.01 * np.eye(D_latent)) for A,b in zip(As, bs)]
+    emission_distns = DiagonalRegression(D_obs, D_latent+1, A=np.hstack((C, d)), sigmasq=sigma_obs)
 
     slds = HMMSLDS(
         dynamics_distns=dynamics_distns,
@@ -94,7 +96,7 @@ def sample_slds_model():
         z[t] = np.random.choice(np.arange(K), p=P[z[t-1]])
     z = np.repeat(z, D)
 
-    statesobj = slds._states_class(model=slds, T=z.size, stateseq=z)
+    statesobj = slds._states_class(model=slds, T=z.size, stateseq=z, inputs=np.ones((z.size, 1)))
     y = statesobj.data = statesobj.generate_obs()
     x = statesobj.gaussian_states
     slds.states_list.append(statesobj)
@@ -183,7 +185,7 @@ def draw_slds_figure(z, x, y, filename=None):
     ax.set_ylabel("${\\mathbf{z}_t}$", rotation=0, verticalalignment='center')
 
     if filename is not None:
-        fig.savefig(filename, **saveargs)
+        fig.savefig(filename)
 
     plt.show()
 
@@ -209,9 +211,13 @@ def plot_vector_field(k, A, b=None, n_pts=30, xmin=-5, xmax=5,
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, aspect=1.0)
     ax.quiver(XY[0], XY[1], d_xy[:,0], d_xy[:,1], color=C,
-              scale=1.0, scale_units="inches",
+              # scale=3.0, scale_units="inches",
               headwidth=5.,
+              lw=6,
               )
+
+    center = -np.linalg.solve(A - np.eye(D_latent), b)
+    ax.plot(center[0], center[1], 'o', color=colors[k], markersize=4)
 
     ax.set_xlabel("$x_1$", fontsize=9)
     ax.set_ylabel("$x_2$", fontsize=9)
@@ -222,17 +228,21 @@ def plot_vector_field(k, A, b=None, n_pts=30, xmin=-5, xmax=5,
 
     ax.set_title(title, fontsize=10)
 
+    plt.savefig("dynamics_{}.pdf".format(k))
+
 if __name__ == "__main__":
     # Sample data
     z,x,y,slds = sample_slds_model()
 
     # Illustrative figure of SLDS
-    draw_slds_figure(z,x,y)
+    draw_slds_figure(z,x,y, filename="slds_example.pdf")
 
     # Vector fields for latent states
     for k in range(K):
-        plot_vector_field(k, slds.dynamics_distns[k].A,
+        plot_vector_field(k, slds.dynamics_distns[k].A[:, :-1],
+                          b=slds.dynamics_distns[k].A[:,-1],
                           title="$A^{(%d)} x_t + b^{(%d)}$" % (k+1,k+1),
-                          figsize=(2.75,2.75))
+                          figsize=(2.,2.),
+                          n_pts=10)
     plt.show()
 
